@@ -2,7 +2,7 @@ import concurrent.futures as cf
 import random
 import time
 from functools import partial
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 from deap import base, creator, tools
 from tqdm import tqdm
@@ -75,7 +75,7 @@ def _evolve(
     executor: cf.ProcessPoolExecutor,
     elitism_count: int = 0,
     immigration_rate: float = 0.0,
-    eval_timeout: float = 10.0,
+    eval_timeout: Optional[float] = None,
 ) -> creator.Individual:
     hof = tools.HallOfFame(1)
     pop_size = len(population)
@@ -96,20 +96,26 @@ def _evolve(
             population[idx].fitness.values = fut.result()
             n_harvested += 1
 
-        # ── 2. wait for remaining pending with timeout ──
+        # ── 2. dynamic wait: harvest until enough ready ──
         if pending:
-            if eval_timeout is None:
-                done, _ = cf.wait(list(pending))
-            else:
-                remaining = eval_timeout - (time.perf_counter() - t0)
-                if remaining > 0:
-                    done, _ = cf.wait(list(pending), timeout=remaining)
+            t_wait = time.perf_counter()
+            while pending:
+                pending_idxs = set(pending.values())
+                ready_check = [ind for i, ind in enumerate(population) if i not in pending_idxs]
+                desired_ready = max(elitism_count + 1, pop_size - executor._max_workers)
+                if len(ready_check) >= desired_ready:
+                    break
+                if eval_timeout is not None:
+                    remaining = eval_timeout - (time.perf_counter() - t_wait)
+                    if remaining <= 0:
+                        break
+                    done, _ = cf.wait(list(pending), timeout=remaining, return_when=cf.FIRST_COMPLETED)
                 else:
-                    done = set()
-            for fut in done:
-                idx = pending.pop(fut)
-                population[idx].fitness.values = fut.result()
-                n_harvested += 1
+                    done, _ = cf.wait(list(pending), return_when=cf.FIRST_COMPLETED)
+                for fut in done:
+                    idx = pending.pop(fut)
+                    population[idx].fitness.values = fut.result()
+                    n_harvested += 1
 
         # ── 3. split ready / pending ──
         pending_idxs: set = set(pending.values())
@@ -219,7 +225,7 @@ def run(
     mutation_weights: Tuple[float, ...] = None,
     elitism_count: int = None,
     immigration_rate: float = None,
-    eval_timeout: float = None,
+    eval_timeout: Optional[float] = None,
     solver_workers: int = None,
     solver_threads: int = None,
 ) -> Tuple[Graph, float]:
@@ -239,7 +245,7 @@ def run(
     print(f"  TopoFlow GA (async) |  Target v = {v_target:.10f}")
     print(f"  pop={pop_size}  gen={generations}  mut_rate={mutation_rate}")
     print(f"  tournament_size={tournament_size}  elitism={elitism_count}  immigration={immigration_rate:.2f}")
-    print(f"  eval_timeout={eval_timeout}s  workers={n_workers}  threads={threads}")
+    print(f"  eval_timeout={eval_timeout if eval_timeout is not None else 'dynamic'}s  workers={n_workers}  threads={threads}")
     print(f"{'='*60}")
 
     toolbox = base.Toolbox()

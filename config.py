@@ -43,20 +43,20 @@ class Config:
     random_crossing_prob: float = 0.3
 
     # ── GA ──
-    pop_size: int = 100
+    pop_size: int = 80
     generations: int = 2000
-    target_f: float = 269 / 1001
+    target_f: float = 325 / 799
     mutation_rate: float = 0.5
-    crossover_rate: float = 0.6
+    crossover_rate: float = 0.5
     tournament_size: int = 2
     elitism_count: int = 2
     immigration_rate: float = 0.05
-    eval_timeout: float = 15.0
+    eval_timeout: Optional[float] = None
 
     # ── Solver ──
     solver_cache_size: int = 10000
-    solver_threads: int = 1
-    solver_workers: int = 16
+    solver_threads: int = 2
+    solver_workers: int = 20
     infeasible_throughput: float = 0.0
 
 
