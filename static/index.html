@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TopoFlow Simulator</title>
+    <style>
+      :root {
+        --bg: #f4efe6;
+        --panel: #fffaf1;
+        --ink: #1b1f23;
+        --muted: #5f6772;
+        --line: #d7cdbf;
+        --accent: #19324d;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html, body {
+        height: 100%;
+        overflow: hidden;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top left, rgba(255, 255, 255, 0.65), transparent 28%),
+          linear-gradient(135deg, #efe2c7, var(--bg));
+      }
+
+      .layout {
+        height: 100vh;
+        display: grid;
+        grid-template-columns: 280px 1fr 300px;
+        gap: 16px;
+        padding: 16px;
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        box-shadow: 0 16px 40px rgba(72, 55, 24, 0.08);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      .controls,
+      .inspector {
+        padding: 18px;
+        overflow-y: auto;
+        flex: 1 1 0;
+      }
+
+      h1,
+      h2 {
+        margin: 0 0 12px;
+        font-size: 20px;
+      }
+
+      .subtitle {
+        margin: 0 0 18px;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+
+      .control-group {
+        display: grid;
+        gap: 10px;
+        margin-bottom: 18px;
+      }
+
+      .tool-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .buttons {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .checkbox-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--ink);
+      }
+
+      .continuous-label {
+        color: #0f766e;
+        font-weight: 700;
+      }
+
+      .discrete-label {
+        color: #1f2937;
+        font-weight: 700;
+      }
+
+      .inline-input {
+        display: grid;
+        gap: 8px;
+      }
+
+      .solver-group {
+        display: grid;
+        gap: 10px;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #f4ebdd;
+      }
+
+      .solver-group .solver-toggle {
+        font-weight: 700;
+      }
+
+      .solver-options {
+        display: grid;
+        gap: 8px;
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fffaf1;
+      }
+
+      .solver-options.inline-row {
+        grid-template-columns: minmax(0, 1fr) 96px;
+        align-items: end;
+      }
+
+      .solver-options.inline-row .inline-input {
+        gap: 4px;
+      }
+
+      .solver-options legend {
+        padding: 0 4px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .solver-options label {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        line-height: 1.35;
+      }
+
+      .solver-options .inline-input {
+        display: grid;
+        gap: 4px;
+      }
+
+      .solver-options .inline-input span {
+        white-space: nowrap;
+      }
+
+      .solution-nav-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .solution-nav-row button {
+        width: auto;
+        flex: 0 0 auto;
+      }
+
+      .solution-nav-row span {
+        flex: 1;
+        text-align: center;
+        font-weight: 600;
+        font-size: 14px;
+      }
+
+      .stack {
+        display: grid;
+        gap: 10px;
+      }
+
+      button,
+      input[type="range"],
+      input[type="number"],
+      input[type="text"],
+      select {
+        width: 100%;
+      }
+
+      input[type="number"],
+      input[type="text"],
+      select {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 10px 12px;
+        background: white;
+        color: var(--ink);
+      }
+
+      button {
+        border: 0;
+        border-radius: 12px;
+        padding: 11px 14px;
+        background: var(--accent);
+        color: white;
+        cursor: pointer;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        line-height: 1.25;
+        min-height: 0;
+      }
+
+      button.secondary {
+        background: #8b6f47;
+      }
+
+      button.is-active {
+        background: #0f766e;
+      }
+
+      .stat-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 10px 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .stat-row:last-child {
+        border-bottom: 0;
+      }
+
+      .initial-state-row {
+        display: none;
+      }
+
+      .radio-row {
+        display: flex;
+        gap: 8px;
+      }
+
+      .radio-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        cursor: pointer;
+        font-size: 13px;
+      }
+
+      .radio-pill input {
+        width: auto;
+        margin: 0;
+      }
+
+      .stat-key {
+        color: var(--muted);
+      }
+
+      .graph-panel {
+        overflow: hidden;
+        position: relative;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .graph-header {
+        padding: 18px 18px 0;
+        flex: 0 0 auto;
+      }
+
+      .graph-wrap {
+        padding: 10px 12px 12px;
+        flex: 1 1 0;
+        min-height: 0;
+      }
+
+      svg {
+        width: 100%;
+        height: 100%;
+        border-radius: 16px;
+        user-select: none;
+        -webkit-user-select: none;
+        background:
+          linear-gradient(rgba(25, 50, 77, 0.04) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(25, 50, 77, 0.04) 1px, transparent 1px),
+          linear-gradient(180deg, #fffdf7, #f8f1e3);
+        background-size: 28px 28px, 28px 28px, auto;
+        border: 1px solid var(--line);
+      }
+
+      .edge-hit {
+        fill: none;
+        stroke: transparent;
+        stroke-width: 18;
+        cursor: pointer;
+      }
+
+      .edge-line {
+        fill: none;
+        stroke: #667085;
+        stroke-width: 3;
+        marker-end: url(#arrow);
+        transition: stroke 100ms ease, stroke-width 100ms ease;
+      }
+
+      .edge-group.is-active .edge-line {
+        stroke-width: 5;
+      }
+
+      .edge-group.is-selected .edge-line {
+        stroke-width: 5;
+        filter: drop-shadow(0 0 3px rgba(102, 112, 133, 0.95));
+      }
+
+      .edge-group.is-blocked .edge-line {
+        stroke: #dc2626;
+      }
+
+      .edge-line.draft-edge {
+        stroke: #0f766e;
+        stroke-dasharray: 8 6;
+      }
+
+      .graph-boundary {
+        fill: none;
+        stroke: #8b6f47;
+        stroke-width: 3;
+        stroke-dasharray: 16 12;
+        pointer-events: none;
+      }
+
+      .edge-flow {
+        fill: #1f2937;
+        font-size: 11px;
+        font-weight: 700;
+        pointer-events: none;
+      }
+
+      .edge-flow-continuous {
+        fill: #0f766e;
+      }
+
+      .node {
+        cursor: pointer;
+      }
+
+      .node circle {
+        stroke: rgba(255, 255, 255, 0.78);
+        stroke-width: 3;
+        transition: transform 120ms ease, stroke-width 120ms ease, filter 120ms ease;
+      }
+
+      .node text {
+        fill: white;
+        font-size: 12px;
+        font-weight: 600;
+        pointer-events: none;
+      }
+
+      .node .node-type {
+        font-size: 10px;
+        font-weight: 500;
+        opacity: 0.92;
+      }
+
+      .node .node-flow {
+        fill: #1f2937;
+        font-size: 11px;
+        font-weight: 700;
+      }
+
+      .node .node-flow-continuous {
+        fill: #0f766e;
+      }
+
+      .node.is-selected circle {
+        stroke: #111827;
+        stroke-width: 5;
+      }
+
+      .node.is-edge-start circle {
+        stroke: #0f766e;
+        stroke-width: 5;
+      }
+
+      .node.has-item circle {
+        filter: drop-shadow(0 0 10px rgba(255, 214, 10, 0.7));
+      }
+
+      .history-box {
+        margin-top: 14px;
+        padding: 12px;
+        border-radius: 12px;
+        background: #f4ebdd;
+        border: 1px solid var(--line);
+        font-family: Consolas, "Courier New", monospace;
+        word-break: break-all;
+        min-height: 96px;
+      }
+
+      .history-meta {
+        margin-top: 10px;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+
+      .status-box {
+        margin: 0 18px 14px;
+        padding: 10px 14px;
+        border-radius: 10px;
+        background: #eef4ed;
+        border: 1px solid #8fba8b;
+        color: #2c5e2e;
+        font-size: 13px;
+        line-height: 1.45;
+        word-break: break-all;
+        flex: 0 0 auto;
+      }
+
+      .app-toast {
+        position: fixed;
+        left: 50%;
+        bottom: 32px;
+        transform: translate(-50%, 24px);
+        max-width: min(80vw, 640px);
+        padding: 14px 20px;
+        border-radius: 12px;
+        font-size: 14px;
+        line-height: 1.45;
+        color: white;
+        background: #1b1f23;
+        box-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 180ms ease, transform 180ms ease;
+        z-index: 1000;
+      }
+
+      .app-toast-visible {
+        opacity: 1;
+        transform: translate(-50%, 0);
+      }
+
+      .app-toast-error {
+        background: #b3261e;
+      }
+
+      .app-toast-info {
+        background: #19324d;
+      }
+
+      @media (max-width: 1100px) {
+        .layout {
+          grid-template-columns: 1fr;
+          height: auto;
+          min-height: 100vh;
+          overflow-y: auto;
+        }
+
+        .panel {
+          max-height: 60vh;
+        }
+
+        .graph-panel {
+          min-height: 480px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="panel controls">
+        <div class="status-box" id="status-text">-</div>
+
+        <div class="control-group">
+          <!-- <div class="stat-row">
+            <span class="stat-key">当前模式</span>
+            <strong id="mode-value">选择</strong>
+          </div> -->
+          <div class="stat-row">
+            <span class="stat-key">图规模</span>
+            <strong id="graph-stats">0 个节点 / 0 条边</strong>
+          </div>
+          <!-- <div class="stat-row">
+            <span class="stat-key">连边起点</span>
+            <strong id="edge-draft">起点: 未选择</strong>
+          </div> -->
+        </div>
+
+        <div class="control-group">
+          <div class="tool-grid">
+            <button data-mode-button="select" class="secondary">选择 `Esc/X`</button>
+            <button data-mode-button="edge">连边 `E`</button>
+            <button data-mode-button="add-splitter">分流器 `1`</button>
+            <button data-mode-button="add-merger">汇流器 `2`</button>
+            <button data-mode-button="add-source" class="secondary">起点 `3`</button>
+            <button data-mode-button="add-sink" class="secondary">终点 `4`</button>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <div class="stat-row">
+            <span class="stat-key">当前帧</span>
+            <strong id="frame-value">0</strong>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <label for="fps-input">每秒离散模拟帧数: <strong id="fps-value">100</strong></label>
+          <input id="fps-input" type="range" min="1" max="5000" value="100" />
+          <label class="checkbox-row" for="show-edge-flow-toggle">
+            <input id="show-edge-flow-toggle" type="checkbox" checked />
+            <span>显示所有边流量占比</span>
+          </label>
+          <div class="solver-group">
+            <label class="checkbox-row solver-toggle" for="continuous-solve-toggle">
+              <input id="continuous-solve-toggle" type="checkbox" checked />
+              <span>修改后使用<strong class="continuous-label">连续</strong>求解器</span>
+            </label>
+            <div class="solution-nav-row" id="solution-nav" style="display:none">
+              <button id="prev-solution-btn" class="secondary">◀</button>
+              <span id="solution-index">解 1 / 1</span>
+              <button id="next-solution-btn">▶</button>
+            </div>
+          </div>
+
+          <div class="solver-group">
+            <label class="checkbox-row solver-toggle" for="auto-solve-toggle">
+              <input id="auto-solve-toggle" type="checkbox" checked />
+              <span>修改后使用<strong class="discrete-label">离散</strong>求解器</span>
+            </label>
+            <div class="solver-options">
+              <label class="checkbox-row" for="initial-full-toggle">
+                <input id="initial-full-toggle" type="checkbox" />
+                <span>初始状态全满（所有边与分/汇流器初始持货）</span>
+              </label>
+              <label class="inline-input" for="auto-solve-frames">
+                <span>帧数</span>
+                <input id="auto-solve-frames" type="number" min="0" step="1" value="1000" />
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="buttons">
+          <button id="play-btn">开始</button>
+          <button id="pause-btn" class="secondary">暂停</button>
+          <button id="step-btn">单步</button>
+          <button id="reset-btn" class="secondary">重置</button>
+          <button id="clear-btn" class="secondary" style="grid-column: span 2">清空</button>
+        </div>
+
+        <div class="control-group">
+          <h2>本地存档</h2>
+          <div class="stack">
+            <input id="save-name-input" type="text" placeholder="输入图名称" />
+            <select id="save-list" size="5"></select>
+          </div>
+        </div>
+
+        <div class="buttons">
+          <button id="save-btn">保存</button>
+          <button id="load-btn" class="secondary">加载</button>
+          <button id="rename-btn">重命名</button>
+          <button id="delete-save-btn" class="secondary">删除存档</button>
+          <button id="export-btn" class="secondary" style="grid-column: span 2">导出 graph.txt</button>
+          <button id="import-btn" class="secondary" style="grid-column: span 2">导入 graph.txt</button>
+        </div>
+        <input type="file" id="import-file-input" accept=".txt" style="display:none" />
+      </aside>
+
+      <main class="panel graph-panel">
+        <!-- <div class="graph-header">
+          <h2>图结构</h2>
+          <p class="subtitle">任意模式都可选中节点或边并删除；连边模式下先点起点再点终点。</p>
+        </div> -->
+        <div class="graph-wrap">
+           <svg id="graph" viewBox="0 0 900 560" aria-label="TopoFlow graph"></svg>
+        </div>
+      </main>
+
+      <aside class="panel inspector">
+        <h2>对象统计</h2>
+        <div class="stat-row">
+          <span class="stat-key">对象</span>
+          <strong id="selected-node">merge1</strong>
+        </div>
+        <div class="stat-row">
+          <span class="stat-key">类型</span>
+          <strong id="selected-type">merger</strong>
+        </div>
+        <div class="stat-row">
+          <span class="stat-key">端点</span>
+          <strong id="selected-endpoints">-</strong>
+        </div>
+        <div class="stat-row">
+          <span class="stat-key">持货</span>
+          <strong id="selected-item">0</strong>
+        </div>
+        <div class="stat-row initial-state-row" id="initial-state-row">
+          <span class="stat-key">初状态(离散模拟)</span>
+          <div class="radio-row">
+            <label class="radio-pill">
+              <input type="radio" name="initial-state" value="empty" />
+              <span>空</span>
+            </label>
+            <label class="radio-pill">
+              <input type="radio" name="initial-state" value="full" />
+              <span>满</span>
+            </label>
+          </div>
+        </div>
+        <div class="stat-row">
+          <span class="stat-key">流量占比</span>
+          <strong id="selected-ratio">0/1</strong>
+        </div>
+        <div class="stat-row">
+          <span class="stat-key">后缀循环节长度</span>
+          <strong id="selected-cycle">0</strong>
+        </div>
+        <div class="history-box" id="selected-history">(empty)</div>
+        <div class="history-meta" id="history-meta">显示最近 0 位 / 全长 0 位</div>
+      </aside>
+    </div>
+
+    <script src="./src/simulator.js"></script>
+    <script src="./src/app.js"></script>
+  </body>
+</html>

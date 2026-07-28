@@ -1,0 +1,8 @@
+In -> Left
+Left -> Right
+Right -> Out
+Up -> Left
+Up -> Down
+Right -> Up
+Down -> Left
+Right -> Down

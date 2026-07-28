@@ -1,0 +1,18 @@
+[project]
+name = "topoflow"
+version = "0.1.0"
+description = "GA-driven DAG topology optimization with MILP flow solver"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "pulp>=3.3.2",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
+    "tqdm>=4.69.1",
+    "highspy>=1.15.1",
+    "deap>=1.4.2",
+]
+
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple"
+default = true

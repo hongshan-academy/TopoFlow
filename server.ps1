@@ -1,0 +1,2 @@
+uv sync
+uv run uvicorn server:app --port 8081 --host 127.0.0.1
