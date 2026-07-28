@@ -11,6 +11,7 @@ dependencies = [
     "tqdm>=4.69.1",
     "highspy>=1.15.1",
     "deap>=1.4.2",
+    "fraction>=2.2.0",
 ]
 
 [[tool.uv.index]]

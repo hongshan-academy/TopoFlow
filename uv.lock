@@ -156,6 +156,15 @@ wheels = [
 ]
 
 [[package]]
+name = "fraction"
+version = "2.2.0"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/5f/77/4d0ad9332ebf561d6966e0c7d9daecefd2031cd0dd73f9d1760cac3ae0ec/Fraction-2.2.0.tar.gz", hash = "sha256:2c1179f20c8b749622935fe04db1c7f2987f011f2376bdad84c2a39c8e3d0fdb" }
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/58/e8/6a04edfad07782e51a7ce28b4e3240978c18b337f6d07d178e43398b8a4b/Fraction-2.2.0-py3-none-any.whl", hash = "sha256:f1b7f02a03cdbf3552172174191352dbe6c9cabe0c0841a4956a49db0ce1554a" },
+]
+
+[[package]]
 name = "h11"
 version = "0.16.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
@@ -381,6 +390,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "deap" },
     { name = "fastapi" },
+    { name = "fraction" },
     { name = "highspy" },
     { name = "pulp" },
     { name = "tqdm" },
@@ -391,6 +401,7 @@ dependencies = [
 requires-dist = [
     { name = "deap", specifier = ">=1.4.2" },
     { name = "fastapi", specifier = ">=0.115.0" },
+    { name = "fraction", specifier = ">=2.2.0" },
     { name = "highspy", specifier = ">=1.15.1" },
     { name = "pulp", specifier = ">=3.3.2" },
     { name = "tqdm", specifier = ">=4.69.1" },
