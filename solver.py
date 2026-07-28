@@ -176,10 +176,7 @@ def solve(graph: Graph, msg: bool = False, threads: Optional[int] = None, exclud
     # problem += pulp.lpSum(is_full)
     problem += 0
 
-    if threads:
-        problem.solve(pulp.HiGHS(msg=msg, threads=threads))
-    else:
-        problem.solve(pulp.HiGHS(msg=msg, threads=threads))
+    problem.solve(pulp.HiGHS(msg=msg, threads=threads))
 
 
     result = SolverResult(
@@ -195,12 +192,12 @@ def solve(graph: Graph, msg: bool = False, threads: Optional[int] = None, exclud
     return result
 
 if __name__ == '__main__':
-    # for data in ['data/graph_0.4.txt', 'data/graph_0.375.txt', 'data/graph_0.333.txt', 'data/graph_0.5.txt', 'data/graph_0.333_simple.txt']:
-    # for data in ['data/graph.txt']:
-    # for data in ['data/graph_2sinks.txt']:
-    for data in ['data/graph_0.333.txt']:
+    # for data in ['graph/graph_0.4.txt', 'graph/graph_0.375.txt', 'graph/graph_0.333.txt', 'graph/graph_0.5.txt', 'graph/graph_0.333_simple.txt']:
+    # for data in ['graph/graph.txt']:
+    # for data in ['graph/graph_2sinks.txt']:
+    for data in ['output/ga_output_1.txt']:
         with open(data, 'r', encoding='utf-8') as file:
             result = solve(Graph.from_text(file.read()), msg=True)
             print(format_result(result))
-        # with open('graph/graph_0.333.dot', 'w', encoding='utf-8') as file:
+        # with open('output/visualize/graph_0.333.dot', 'w', encoding='utf-8') as file:
         #     file.write(visualize_result(result))

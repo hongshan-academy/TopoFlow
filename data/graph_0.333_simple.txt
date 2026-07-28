@@ -1,5 +1,0 @@
-In -> C
-C -> S
-S -> Out
-S -> C
-S -> C
