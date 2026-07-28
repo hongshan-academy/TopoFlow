@@ -22,9 +22,9 @@ def format_result(result: SolverResult) -> str:
         string += f'EDGES: \n'
         for edge_result in result.edges:
             if edge_result.is_blocked:
-                string += f'  {edge_result.source} -> {edge_result.target}: f={edge_result.flow:.6f} [blocked]\n'
+                string += f'  {edge_result.source} -> {edge_result.target}: v={edge_result.flow:.6f} [blocked]\n'
             else:
-                string += f'  {edge_result.source} -> {edge_result.target}: f={edge_result.flow:.6f}\n'
+                string += f'  {edge_result.source} -> {edge_result.target}: v={edge_result.flow:.6f}\n'
         string += '\n'
     
     return string
@@ -52,7 +52,7 @@ def visualize_result(result: SolverResult) -> str:
         color = "red" if edge.is_blocked else "black"
         lines.append(
             f'  "{edge.source}" -> "{edge.target}" '
-            f'[label="f={edge.flow:.6f}", color={color}]'
+            f'[label="v={edge.flow:.6f}", color={color}]'
         )
 
     lines.append("}")

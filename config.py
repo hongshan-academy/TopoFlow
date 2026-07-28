@@ -34,9 +34,9 @@ class Config:
     # internal_nodes_choices: List[int] = field(default_factory=lambda: [24])
     # internal_nodes_weights: List[int] = field(default_factory=lambda: [1, 1, 1, 1, 2, 3, 4, 4, 4 , 3 , 2 ])
     # internal_nodes_weights: List[int] = field(default_factory=lambda: [1])
-    internal_nodes_choices: List[int] = field(default_factory=lambda: list(range(16, 31)))
+    internal_nodes_choices: List[int] = field(default_factory=lambda: list(range(25, 46)))
     internal_nodes_weights: List[float] = field(default_factory=lambda: [
-        math.exp(-((x - 23) ** 2) / (2 * 5 ** 2)) for x in range(16, 31)
+        math.exp(-((x - 35) ** 2) / (2 * 5 ** 2)) for x in range(25, 46)
     ])
     max_generation_tries: int = 500
     balanced_config_tries: int = 2000

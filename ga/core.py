@@ -199,7 +199,7 @@ def _evolve(
         elapsed = time.perf_counter() - t0
 
         pbar.set_postfix_str(
-            f"best=({best_err:.0f},{best_n:.0f}) "
+            f"best=({best_err:.0f}, {best_n:.0f}) "
             f"avg={avg_err:.6f} "
             f"n={min(nodes_list) if nodes_list else 0}~{max(nodes_list) if nodes_list else 0} "
             f"mut={n_mutated}/{len(selected)} "

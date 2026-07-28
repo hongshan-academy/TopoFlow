@@ -126,56 +126,6 @@ function resolveSlot(slotList, requestedSlot, label) {
   return emptyIndex;
 }
 
-function computeCycleInfo(bits) {
-  const seq = Array.isArray(bits) ? bits : [];
-  for (let totalLength = seq.length; totalLength >= 2; totalLength -= 1) {
-    const start = seq.length - totalLength;
-    for (let periodLength = 1; periodLength * 2 <= totalLength; periodLength += 1) {
-      if (totalLength % periodLength !== 0) {
-        continue;
-      }
-
-      let matches = true;
-      for (let i = periodLength; i < totalLength; i += 1) {
-        if (seq[start + i] !== seq[start + (i % periodLength)]) {
-          matches = false;
-          break;
-        }
-      }
-
-      if (matches) {
-        const pattern = seq.slice(start, start + periodLength);
-        const ones = pattern.reduce((sum, bit) => sum + bit, 0);
-        let extraPrefixLength = 0;
-        let probe = start - 1;
-        while (probe >= 0) {
-          const patternIndex = (probe - start + totalLength) % periodLength;
-          if (seq[probe] !== pattern[patternIndex]) {
-            break;
-          }
-          extraPrefixLength += 1;
-          probe -= 1;
-        }
-        return {
-          periodLength,
-          repeatedLength: totalLength + extraPrefixLength,
-          repeatCount: totalLength / periodLength,
-          pattern,
-          ones,
-          extraPrefixLength,
-        };
-      }
-    }
-  }
-
-  return null;
-}
-
-function computeSuffixCycleLength(bits) {
-  const info = computeCycleInfo(bits);
-  return info ? info.periodLength : 0;
-}
-
 function computeUpdateOrder(nodes, nodeOrder, edges) {
   const visited = new Set();
   const order = [];
@@ -271,9 +221,8 @@ class TopoFlowSimulator {
     this.nodeOrder = built.nodeOrder;
     this.updateOrder = computeUpdateOrder(this.nodes, this.nodeOrder, this.edges);
     this.deliverableNodeIds = computeDeliverableNodeIds(this.nodes, this.edges);
-    this.orderIndex = new Map(this.updateOrder.map((nodeId, index) => [nodeId, index]));
-    this.historyLimit = options.historyLimit ?? 256;
     this.initialFull = Boolean(options.initialFull);
+    this.globalCycleInfo = null;
     this.frame = 0;
     this.edgeRuntime = new Map();
     this.runtime = new Map();
@@ -294,10 +243,6 @@ class TopoFlowSimulator {
         hasItem: startsWithItem,
         rrInIndex: -1,
         rrOutIndex: -1,
-        flowHistory: [],
-        displayHistory: [],
-        flowOnes: 0,
-        flowTotal: 0,
       });
     }
     for (const edge of this.edges.values()) {
@@ -305,11 +250,82 @@ class TopoFlowSimulator {
         edge.initialFull !== undefined ? edge.initialFull : this.initialFull;
       this.edgeRuntime.set(edge.id, {
         hasItem: edgeInitialFull,
-        flowHistory: [],
-        displayHistory: [],
-        flowOnes: 0,
-        flowTotal: 0,
       });
+    }
+    this.globalCycleInfo = null;
+  }
+
+  serializeState() {
+    const parts = [];
+    for (const nodeId of this.nodeOrder) {
+      const rt = this.runtime.get(nodeId);
+      parts.push(rt.hasItem ? 1 : 0, rt.rrInIndex, rt.rrOutIndex);
+    }
+    for (const [, rt] of this.edgeRuntime) {
+      parts.push(rt.hasItem ? 1 : 0);
+    }
+    return parts.join(",");
+  }
+
+  runUntilCycle() {
+    const stateToFrame = new Map();
+    const nodeFlowOnes = new Map();
+    const edgeFlowOnes = new Map();
+
+    for (const nodeId of this.runtime.keys()) {
+      nodeFlowOnes.set(nodeId, 0);
+    }
+    for (const edgeId of this.edgeRuntime.keys()) {
+      edgeFlowOnes.set(edgeId, 0);
+    }
+
+    while (true) {
+      const key = this.serializeState();
+
+      if (stateToFrame.has(key)) {
+        const stored = stateToFrame.get(key);
+        const period = this.frame - stored.frame;
+
+        const nodeRatios = new Map();
+        for (const [nodeId, cumOnes] of nodeFlowOnes) {
+          const cycleOnes = cumOnes - stored.nodeFlowOnes.get(nodeId);
+          nodeRatios.set(nodeId, reduceFraction(cycleOnes, period));
+        }
+
+        const edgeRatios = new Map();
+        for (const [edgeId, cumOnes] of edgeFlowOnes) {
+          const cycleOnes = cumOnes - stored.edgeFlowOnes.get(edgeId);
+          edgeRatios.set(edgeId, reduceFraction(cycleOnes, period));
+        }
+
+        this.globalCycleInfo = {
+          period,
+          cycleStartFrame: stored.frame,
+          warmupFrames: stored.frame,
+          totalFrames: this.frame,
+          nodeRatios,
+          edgeRatios,
+        };
+
+        return this.globalCycleInfo;
+      }
+
+      stateToFrame.set(key, {
+        frame: this.frame,
+        nodeFlowOnes: new Map(nodeFlowOnes),
+        edgeFlowOnes: new Map(edgeFlowOnes),
+      });
+
+      const { nodeReceived, edgeFilled } = this.stepOnce();
+
+      for (const [nodeId, received] of nodeReceived) {
+        if (received) {
+          nodeFlowOnes.set(nodeId, nodeFlowOnes.get(nodeId) + 1);
+        }
+      }
+      for (const edgeId of edgeFilled) {
+        edgeFlowOnes.set(edgeId, edgeFlowOnes.get(edgeId) + 1);
+      }
     }
   }
 
@@ -398,29 +414,12 @@ class TopoFlowSimulator {
       }
       runtime.rrInIndex = current.rrInIndex;
       runtime.rrOutIndex = current.rrOutIndex;
-
-      const flowBit = nodeReceived.get(node.id) ? 1 : 0;
-      runtime.flowHistory.push(flowBit);
-      runtime.displayHistory.push(flowBit);
-      if (runtime.displayHistory.length > this.historyLimit) {
-        runtime.displayHistory.shift();
-      }
-      runtime.flowOnes += flowBit;
-      runtime.flowTotal += 1;
     }
 
     for (const edge of this.edges.values()) {
       const runtime = this.edgeRuntime.get(edge.id);
       const current = edgeState.get(edge.id);
       runtime.hasItem = current.hasItem;
-      const flowBit = edgeFilled.has(edge.id) ? 1 : 0;
-      runtime.flowHistory.push(flowBit);
-      runtime.displayHistory.push(flowBit);
-      if (runtime.displayHistory.length > this.historyLimit) {
-        runtime.displayHistory.shift();
-      }
-      runtime.flowOnes += flowBit;
-      runtime.flowTotal += 1;
       if (current.hasItem) {
         occupiedEdges.push(edge.id);
       }
@@ -428,7 +427,7 @@ class TopoFlowSimulator {
 
     this.occupiedEdges = occupiedEdges;
     this.frame += 1;
-    return this.getSnapshot();
+    return { nodeReceived, edgeFilled };
   }
 
   processNodeFrame(nodeId, frame) {
@@ -540,24 +539,14 @@ class TopoFlowSimulator {
 
   analyzeNode(nodeId) {
     const node = this.getNode(nodeId);
-    const runtime = this.getRuntime(nodeId);
-    const cycleInfo = computeCycleInfo(runtime.flowHistory);
-    const flowRatio = cycleInfo
-      ? reduceFraction(cycleInfo.ones, cycleInfo.periodLength)
-      : reduceFraction(runtime.flowOnes, runtime.flowTotal);
+    const fraction = this.globalCycleInfo
+      ? this.globalCycleInfo.nodeRatios.get(nodeId)
+      : null;
     return {
       id: node.id,
       type: node.type,
-      hasItem: runtime.hasItem,
-      frame: this.frame,
-      flowHistory: [...runtime.displayHistory],
-      fullHistoryLength: runtime.flowHistory.length,
-      suffixCycleLength: cycleInfo ? cycleInfo.periodLength : 0,
-      cycleInfo,
-      warmupFrames: runtime.flowHistory.length - (cycleInfo ? cycleInfo.repeatedLength : 0),
-      flowRatio,
-      flowOnes: runtime.flowOnes,
-      flowTotal: runtime.flowTotal,
+      flowRatio: fraction,
+      cycleInfo: this.globalCycleInfo,
     };
   }
 
@@ -566,25 +555,15 @@ class TopoFlowSimulator {
     if (!edge) {
       throw new Error(`Unknown edge id: ${edgeId}`);
     }
-    const runtime = this.edgeRuntime.get(edgeId);
-    const cycleInfo = computeCycleInfo(runtime.flowHistory);
-    const flowRatio = cycleInfo
-      ? reduceFraction(cycleInfo.ones, cycleInfo.periodLength)
-      : reduceFraction(runtime.flowOnes, runtime.flowTotal);
+    const fraction = this.globalCycleInfo
+      ? this.globalCycleInfo.edgeRatios.get(edgeId)
+      : null;
     return {
       id: edge.id,
       from: edge.from,
       to: edge.to,
-      hasItem: runtime.hasItem,
-      frame: this.frame,
-      flowHistory: [...runtime.displayHistory],
-      fullHistoryLength: runtime.flowHistory.length,
-      suffixCycleLength: cycleInfo ? cycleInfo.periodLength : 0,
-      cycleInfo,
-      warmupFrames: runtime.flowHistory.length - (cycleInfo ? cycleInfo.repeatedLength : 0),
-      flowRatio,
-      flowOnes: runtime.flowOnes,
-      flowTotal: runtime.flowTotal,
+      flowRatio: fraction,
+      cycleInfo: this.globalCycleInfo,
     };
   }
 
@@ -599,8 +578,6 @@ class TopoFlowSimulator {
           hasItem: runtime.hasItem,
           rrInIndex: runtime.rrInIndex,
           rrOutIndex: runtime.rrOutIndex,
-          flowOnes: runtime.flowOnes,
-          flowTotal: runtime.flowTotal,
         };
       }),
       edges: [...this.edges.values()].map((edge) => ({
@@ -608,8 +585,6 @@ class TopoFlowSimulator {
         from: edge.from,
         to: edge.to,
         hasItem: this.edgeRuntime.get(edge.id).hasItem,
-        flowOnes: this.edgeRuntime.get(edge.id).flowOnes,
-        flowTotal: this.edgeRuntime.get(edge.id).flowTotal,
       })),
       occupiedEdges: [...(this.occupiedEdges || [])],
     };
@@ -635,8 +610,6 @@ class TopoFlowSimulator {
 const simulatorApi = {
   TopoFlowSimulator,
   buildGraph,
-  computeCycleInfo,
-  computeSuffixCycleLength,
   reduceFraction,
 };
 

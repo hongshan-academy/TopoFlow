@@ -599,7 +599,6 @@
   function rebuildSimulator(message) {
     stopRunning();
     state.simulator = new TopoFlowSimulator(cloneGraph(state.graph), {
-      historyLimit: 512,
       initialFull: state.initialFull,
     });
     state.continuousSolution = null;
@@ -608,8 +607,11 @@
     state.provedInfeasible = false;
     state.continuousSolveVersion += 1;
     ensureSelectedObject();
-    const solved = runAutoSolveIfEnabled();
-    state.message = solved ? `${message} 已自动解算 ${solved} 帧。` : message;
+    runAutoSolveIfEnabled();
+    const ci = state.simulator.globalCycleInfo;
+    state.message = ci
+      ? `${message} 周期 ${ci.period} 帧，暖机 ${ci.warmupFrames} 帧。`
+      : message;
     if (state.continuousSolveEnabled) {
       requestContinuousSolve(state.continuousSolveVersion);
     }
@@ -791,7 +793,7 @@
           <path class="edge-hit" d="${pathInfo.d}"></path>
           <path class="edge-line" d="${pathInfo.d}"></path>
           ${
-            edgeAnalysis && discreteLabel
+            edgeAnalysis?.flowRatio && discreteLabel
               ? `<text class="edge-flow" x="${discreteLabel.x}" y="${discreteLabel.y}" text-anchor="middle">${edgeAnalysis.flowRatio.text}</text>`
               : ""
           }
@@ -825,7 +827,7 @@
           <text text-anchor="middle" dy="-2">${node.id}</text>
           <text class="node-type" text-anchor="middle" dy="14">${TYPE_LABELS[node.type]}</text>
           ${
-            sinkAnalysis
+            sinkAnalysis?.flowRatio
               ? `<text class="node-flow" text-anchor="middle" dy="46">${sinkAnalysis.flowRatio.text}</text>`
               : ""
           }
@@ -877,8 +879,8 @@
       els.hasItem.textContent = "-";
       els.ratio.textContent = "-";
       els.cycle.textContent = "-";
-      els.history.textContent = "(empty)";
-      els.historyMeta.textContent = "显示最近 0 位 / 全长 0 位";
+      els.history.textContent = "-";
+      els.historyMeta.textContent = "未求解";
       els.initialStateRow.style.display = "none";
       return;
     }
@@ -901,6 +903,12 @@
       state.selected.kind === "node"
         ? state.continuousSolution?.nodeFlows.get(state.selected.id)
         : state.continuousSolution?.edgeFlows.get(state.selected.id);
+
+    const snapshot = state.simulator.getSnapshot();
+    const hasItem = state.selected.kind === "node"
+      ? Boolean(snapshot.nodes.find((n) => n.id === state.selected.id)?.hasItem)
+      : Boolean(snapshot.edges.find((e) => e.id === state.selected.id)?.hasItem);
+
     els.selected.textContent = analysis.id;
     if (state.selected.kind === "node") {
       els.type.textContent = TYPE_LABELS[analysis.type];
@@ -909,16 +917,16 @@
       els.type.textContent = "传送带";
       els.endpoints.textContent = `${analysis.from} -> ${analysis.to}`;
     }
-    els.hasItem.textContent = analysis.hasItem ? "1" : "0";
-    els.ratio.textContent = analysis.flowRatio.text;
-    els.cycle.textContent = String(analysis.suffixCycleLength);
-    els.history.textContent = analysis.flowHistory.join("") || "(empty)";
+    els.hasItem.textContent = hasItem ? "1" : "0";
+    els.ratio.textContent = analysis.flowRatio?.text ?? "-";
+    els.cycle.textContent = analysis.cycleInfo ? String(analysis.cycleInfo.period) : "-";
+    els.history.textContent = "-";
+
     const discreteMeta = analysis.cycleInfo
-      ? `离散：${analysis.flowRatio.text} / 显示最近 ${analysis.flowHistory.length} 位 / 全长 ${analysis.fullHistoryLength} 位 / ` +
-        `循环段总长 ${analysis.cycleInfo.repeatedLength} / 暖机长度 ${analysis.warmupFrames} / ` +
-        `重复 ${analysis.cycleInfo.repeatCount} 次`
-      : `离散：${analysis.flowRatio.text} / 显示最近 ${analysis.flowHistory.length} 位 / 全长 ${analysis.fullHistoryLength} 位 / ` +
-        `暖机长度 ${analysis.warmupFrames} / 未发现循环后缀`;
+      ? `离散：${analysis.flowRatio.text} / 周期 ${analysis.cycleInfo.period} 帧 / ` +
+        `暖机 ${analysis.cycleInfo.warmupFrames} 帧 / ` +
+        `全长 ${analysis.cycleInfo.totalFrames} 帧`
+      : `离散：${analysis.flowRatio?.text ?? "-"} / 未求解`;
     if (continuousFlow) {
       els.historyMeta.innerHTML =
         `${escapeHtml(discreteMeta)}<br>连续 MILP：${escapeHtml(continuousFlow.text)}`;
@@ -1451,11 +1459,11 @@
   }
 
   function runAutoSolveIfEnabled() {
-    if (!state.autoSolveEnabled || !state.simulator || state.autoSolveFrames <= 0) {
+    if (!state.autoSolveEnabled || !state.simulator) {
       return 0;
     }
-    state.simulator.step(state.autoSolveFrames);
-    return state.autoSolveFrames;
+    state.simulator.runUntilCycle();
+    return state.simulator.globalCycleInfo ? 1 : 0;
   }
 
   function applyInitialFullToAll(value) {
