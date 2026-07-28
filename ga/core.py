@@ -22,9 +22,9 @@ creator.create("Individual", tuple, fitness=creator.FitnessMin)
 _worker_eval_fn = None
 
 
-def _worker_init(v_target: float, threads: int):
+def _worker_init(target_pq: Tuple[int, int], threads: int, max_denominator: int = 10000):
     global _worker_eval_fn
-    _worker_eval_fn = make_evaluate(v_target, threads)
+    _worker_eval_fn = make_evaluate(target_pq, threads, max_denominator=max_denominator)
 
 
 def _eval_one(edges_tuple: Tuple[Tuple[str, str], ...]) -> Tuple[float, int]:
@@ -32,7 +32,7 @@ def _eval_one(edges_tuple: Tuple[Tuple[str, str], ...]) -> Tuple[float, int]:
     try:
         if _worker_eval_fn is not None:
             return _worker_eval_fn(edges_tuple)
-        return evaluate_cached(edges_tuple, 0.0, 1)
+        return evaluate_cached(edges_tuple, (0, 1), 1)
     except Exception:
         return (float("inf"), 0)
 
@@ -70,14 +70,13 @@ def _evolve(
     toolbox: base.Toolbox,
     ngen: int,
     mutation_rate: float,
-    v_target: float,
     threads: int,
     executor: cf.ProcessPoolExecutor,
     elitism_count: int = 0,
     immigration_rate: float = 0.0,
     eval_timeout: Optional[float] = None,
 ) -> creator.Individual:
-    hof = tools.HallOfFame(1)
+    hof = tools.HallOfFame(5)
     pop_size = len(population)
 
     _immig_rate = max(1, int(pop_size * immigration_rate)) if immigration_rate > 0 else 0
@@ -200,7 +199,7 @@ def _evolve(
         elapsed = time.perf_counter() - t0
 
         pbar.set_postfix_str(
-            f"best=({best_err:.6f},{best_n}) "
+            f"best=({best_err:.0f},{best_n:.0f}) "
             f"avg={avg_err:.6f} "
             f"n={min(nodes_list) if nodes_list else 0}~{max(nodes_list) if nodes_list else 0} "
             f"mut={n_mutated}/{len(selected)} "
@@ -211,13 +210,13 @@ def _evolve(
         pbar.update(1)
 
     pbar.close()
-    return hof[0]
+    return hof
 
 
 # ── Entry point ──
 
 def run(
-    v_target: float = None,
+    target_pq: Tuple[int, int] = None,
     pop_size: int = None,
     generations: int = None,
     mutation_rate: float = None,
@@ -228,8 +227,10 @@ def run(
     eval_timeout: Optional[float] = None,
     solver_workers: int = None,
     solver_threads: int = None,
-) -> Tuple[Graph, float]:
-    v_target = v_target if v_target is not None else _cfg.target_f
+    max_denominator: int = 10000,
+    output_path: Optional[str] = None,
+) -> list[dict]:
+    target_pq = target_pq if target_pq is not None else _cfg.target_pq
     pop_size = pop_size or _cfg.pop_size
     generations = generations or _cfg.generations
     mutation_rate = mutation_rate if mutation_rate is not None else _cfg.mutation_rate
@@ -240,12 +241,14 @@ def run(
     eval_timeout = eval_timeout if eval_timeout is not None else _cfg.eval_timeout
     n_workers = solver_workers if solver_workers is not None else _cfg.solver_workers
     threads = solver_threads if solver_threads is not None else _cfg.solver_threads
+    output_path = output_path or _cfg.output_path
 
     print(f"{'='*60}")
-    print(f"  TopoFlow GA (async) |  Target v = {v_target:.10f}")
+    print(f"  TopoFlow GA (async) |  Target = {target_pq[0]}/{target_pq[1]}")
     print(f"  pop={pop_size}  gen={generations}  mut_rate={mutation_rate}")
     print(f"  tournament_size={tournament_size}  elitism={elitism_count}  immigration={immigration_rate:.2f}")
     print(f"  eval_timeout={eval_timeout if eval_timeout is not None else 'dynamic'}s  workers={n_workers}  threads={threads}")
+    print(f"  max_denominator={max_denominator}")
     print(f"{'='*60}")
 
     toolbox = base.Toolbox()
@@ -263,7 +266,7 @@ def run(
     with cf.ProcessPoolExecutor(
         max_workers=n_workers,
         initializer=_worker_init,
-        initargs=(v_target, threads),
+        initargs=(target_pq, threads, max_denominator),
     ) as executor:
         fut_to_idx = {
             executor.submit(_eval_one, tuple(ind)): i
@@ -289,32 +292,45 @@ def run(
         )
 
         t_start = time.perf_counter()
-        best_ind = _evolve(
+        hof = _evolve(
             population, toolbox, generations, mutation_rate,
-            v_target, threads, executor, elitism_count, immigration_rate, eval_timeout,
+            threads, executor, elitism_count, immigration_rate, eval_timeout,
         )
         elapsed = time.perf_counter() - t_start
 
-    best_graph = tuple_to_graph(best_ind)
-    best_err = best_ind.fitness.values[0]
-    best_nodes = best_ind.fitness.values[1]
-
+    results = []
     print(f"\n{'='*60}")
     print(f"  Results")
     print(f"{'='*60}")
     print(f"  Time:              {elapsed:.1f}s ({elapsed/60:.1f}min)")
-    print(f"  Best fitness:      err={best_err:.10f}  nodes={best_nodes}")
-    print(f"  Target v:          {v_target:.10f}")
-    print(f"  Best graph:        {len(best_graph.nodes)} nodes, {len(best_graph.edges)} edges")
-    print(f"  Valid (strict):    {best_graph.is_valid(strict=True)}")
-    print(f"  Source:            {best_graph.sources}")
-    print(f"  Sink:              {best_graph.sinks}")
 
-    deg_counts = {}
-    for n in best_graph.nodes:
-        if n not in best_graph.sources and n not in best_graph.sinks:
-            d = tuple(best_graph.degrees[n])
-            deg_counts[d] = deg_counts.get(d, 0) + 1
-    print(f"  Internal degrees:  {deg_counts}")
+    for rank, ind in enumerate(hof):
+        graph = tuple_to_graph(ind)
+        err = ind.fitness.values[0]
+        nodes = ind.fitness.values[1]
 
-    return best_graph, best_err
+        result = {
+            "rank": rank + 1,
+            "error": int(err),
+            "nodes": int(nodes),
+            "target": {"p": target_pq[0], "q": target_pq[1]},
+            "graph": {
+                "nodes": sorted(graph.nodes),
+                "edges": [list(e) for e in graph.edges],
+            },
+        }
+        results.append(result)
+
+        print(f"  #{rank + 1}:  err={err:.0f}  nodes={nodes}  |  "
+              f"{len(graph.nodes)} nodes, {len(graph.edges)} edges  |  "
+              f"valid(strict)={graph.is_valid(strict=True)}")
+
+    import json
+    import os
+    out_path = output_path or os.path.join("output", "ga_top5.json")
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(results, f, indent=2, ensure_ascii=False)
+    print(f"\n  Saved to: {out_path}")
+
+    return results

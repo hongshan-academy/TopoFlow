@@ -18,5 +18,8 @@ logs/
 # MyPy
 .mypy_cache
 
+# Output
+output/
+
 # Versioned variants
 *_v2*

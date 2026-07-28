@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Set, List, Tuple, Optional, Callable
+from typing import Set, List, Tuple, Optional
 
 import math
 
@@ -34,9 +34,9 @@ class Config:
     # internal_nodes_choices: List[int] = field(default_factory=lambda: [24])
     # internal_nodes_weights: List[int] = field(default_factory=lambda: [1, 1, 1, 1, 2, 3, 4, 4, 4 , 3 , 2 ])
     # internal_nodes_weights: List[int] = field(default_factory=lambda: [1])
-    internal_nodes_choices: List[int] = field(default_factory=lambda: list(range(15, 46)))
+    internal_nodes_choices: List[int] = field(default_factory=lambda: list(range(16, 31)))
     internal_nodes_weights: List[float] = field(default_factory=lambda: [
-        math.exp(-((x - 30) ** 2) / (2 * 5 ** 2)) for x in range(15, 46)
+        math.exp(-((x - 23) ** 2) / (2 * 5 ** 2)) for x in range(16, 31)
     ])
     max_generation_tries: int = 500
     balanced_config_tries: int = 2000
@@ -45,7 +45,8 @@ class Config:
     # ── GA ──
     pop_size: int = 80
     generations: int = 2000
-    target_f: float = 325 / 799
+    # target_f: float = 325 / 799
+    target_pq: Tuple[int, int] = (325, 799)
     mutation_rate: float = 0.5
     crossover_rate: float = 0.5
     tournament_size: int = 2
@@ -58,6 +59,9 @@ class Config:
     solver_threads: int = 1
     solver_workers: int = 16
     infeasible_throughput: float = 0.0
+
+    # ── Output ──
+    output_path: str = "output/ga_top5.json"
 
 
 DEFAULT_CONFIG = Config()
