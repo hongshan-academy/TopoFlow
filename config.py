@@ -55,8 +55,8 @@ class Config:
 
     # ── Solver ──
     solver_cache_size: int = 10000
-    solver_threads: int = 2
-    solver_workers: int = 20
+    solver_threads: int = 1
+    solver_workers: int = 16
     infeasible_throughput: float = 0.0
 
 
