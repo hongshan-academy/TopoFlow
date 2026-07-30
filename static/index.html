@@ -238,10 +238,6 @@
         border-bottom: 0;
       }
 
-      .initial-state-row {
-        display: none;
-      }
-
       .radio-row {
         display: flex;
         gap: 8px;
@@ -541,13 +537,9 @@
               <span>修改后使用<strong class="discrete-label">离散</strong>求解器</span>
             </label>
             <div class="solver-options">
-              <label class="checkbox-row" for="initial-full-toggle">
-                <input id="initial-full-toggle" type="checkbox" />
-                <span>初始状态全满（所有边与分/汇流器初始持货）</span>
-              </label>
               <label class="inline-input" for="auto-solve-frames">
-                <span>帧数</span>
-                <input id="auto-solve-frames" type="number" min="0" step="1" value="1000" />
+                <span>max_frames</span>
+                <input id="auto-solve-frames" type="number" min="1" step="1" value="" />
               </label>
             </div>
           </div>
@@ -608,19 +600,6 @@
           <span class="stat-key">持货</span>
           <strong id="selected-item">0</strong>
         </div>
-        <div class="stat-row initial-state-row" id="initial-state-row">
-          <span class="stat-key">初状态(离散模拟)</span>
-          <div class="radio-row">
-            <label class="radio-pill">
-              <input type="radio" name="initial-state" value="empty" />
-              <span>空</span>
-            </label>
-            <label class="radio-pill">
-              <input type="radio" name="initial-state" value="full" />
-              <span>满</span>
-            </label>
-          </div>
-        </div>
         <div class="stat-row">
           <span class="stat-key">流量占比</span>
           <strong id="selected-ratio">0/1</strong>
@@ -634,7 +613,6 @@
       </aside>
     </div>
 
-    <script src="./src/simulator.js"></script>
     <script src="./src/app.js"></script>
   </body>
 </html>

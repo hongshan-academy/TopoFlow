@@ -3,12 +3,16 @@ import math
 import time
 from fractions import Fraction
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from solver import solve
+from simulator import simulate_frames
 from graph import Graph
+from config import DEFAULT_CONFIG
+from result import SolverResult
 import pulp
 
 LOG_DIR = Path("logs")
@@ -30,7 +34,7 @@ ch.setFormatter(fmt)
 logger.addHandler(ch)
 
 
-def approximate_fraction(value: float, max_denominator: int = 10000, tolerance: float = 1e-8):
+def approximate_fraction(value: float, max_denominator: int = 10000, tolerance: float = 1e-8) -> Dict[str, Any]:
     if not math.isfinite(value):
         return {"numerator": 0, "denominator": 1, "text": "0/1"}
     if abs(value) < tolerance:
@@ -59,22 +63,32 @@ class EdgeModel(BaseModel):
 
 
 class SolveRequest(BaseModel):
-    nodes: list[NodeModel]
-    edges: list[EdgeModel]
+    nodes: List[NodeModel]
+    edges: List[EdgeModel]
+
+
+class SimulateOptions(BaseModel):
+    max_frames: Optional[int] = None
+
+
+class SimulateRequest(BaseModel):
+    nodes: List[NodeModel]
+    edges: List[EdgeModel]
+    options: SimulateOptions = Field(default_factory=SimulateOptions)
 
 
 MAX_SOLUTIONS = 50
 
 
-def _find_free_edge_indices(result):
-    free = set()
+def _find_free_edge_indices(result: SolverResult) -> Set[int]:
+    free: Set[int] = set()
     for i, e in enumerate(result.edges):
         if e.flow >= 1.0 - 1e-8:
             free.add(i)
     return free
 
 
-def _generate_blocked_combos(base, free_indices):
+def _generate_blocked_combos(base: List[bool], free_indices: Set[int]) -> List[List[bool]]:
     free_list = sorted(free_indices)
     results = []
     for mask in range(1 << len(free_list)):
@@ -85,8 +99,10 @@ def _generate_blocked_combos(base, free_indices):
     return results
 
 
-def _build_solution_payload(req_edges, result):
-    edge_flows = []
+def _build_solution_payload(
+    req_edges: List[EdgeModel], result: SolverResult
+) -> Dict[str, Any]:
+    edge_flows: List[Dict[str, Any]] = []
     for (req_edge, solver_edge) in zip(req_edges, result.edges):
         frac = approximate_fraction(solver_edge.flow)
         edge_flows.append({
@@ -95,13 +111,13 @@ def _build_solution_payload(req_edges, result):
             "isBlocked": solver_edge.is_blocked,
         })
 
-    node_flows_map = {}
+    node_flows_map: Dict[str, float] = {}
     for e in result.edges:
         if e.target not in node_flows_map:
             node_flows_map[e.target] = 0.0
         node_flows_map[e.target] += e.flow
 
-    node_flows_list = [
+    node_flows_list: List[Dict[str, Any]] = [
         {"id": nid, "flow": approximate_fraction(val)}
         for nid, val in node_flows_map.items()
     ]
@@ -109,8 +125,8 @@ def _build_solution_payload(req_edges, result):
     return {"edgeFlows": edge_flows, "nodeFlows": node_flows_list}
 
 
-def _deduplicate_solutions(solutions):
-    seen = {}
+def _deduplicate_solutions(solutions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    seen: Dict[Tuple[Tuple[Any, Any, Any], ...], Any] = {}
     for sol in solutions:
         key = tuple(
             (ef["id"], ef["flow"]["numerator"], ef["flow"]["denominator"])
@@ -125,28 +141,42 @@ def _deduplicate_solutions(solutions):
 app = FastAPI()
 
 
+@app.get("/api/config")
+def api_config() -> Dict[str, Any]:
+    return {"max_frames": DEFAULT_CONFIG.sim_max_frames}
+
+
 @app.post("/api/solve")
-def api_solve(req: SolveRequest):
+def api_solve(req: SolveRequest) -> Dict[str, Any]:
     t0 = time.perf_counter()
     node_ids = {n.node_id for n in req.nodes}
 
-    text_lines = []
-    req_edges = []
+    text_lines: List[str] = []
+    req_edges: List[EdgeModel] = []
     for edge in req.edges:
         if edge.from_ in node_ids and edge.to in node_ids:
             text_lines.append(f"{edge.from_} -> {edge.to}")
             req_edges.append(edge)
     text = "\n".join(text_lines)
 
-    graph = Graph.from_text(text)
+    try:
+        graph = Graph.from_text(text)
+    except ValueError as e:
+        return {
+            "feasible": False,
+            "error": str(e),
+            "totalSolutions": 0,
+            "solutions": [],
+            "provedInfeasible": False,
+        }
 
     logger.info("=" * 56)
     logger.info("Solve request — %d nodes, %d edges", len(req.nodes), len(req_edges))
     edge_desc = ", ".join(f"{e.from_}->{e.to}" for e in req_edges)
     logger.info("Edges: %s", edge_desc)
 
-    solutions = []
-    patterns = []
+    solutions: List[Dict[str, Any]] = []
+    patterns: List[List[bool]] = []
     proved_infeasible = False
 
     for i in range(MAX_SOLUTIONS):
@@ -206,6 +236,86 @@ def api_solve(req: SolveRequest):
         "totalSolutions": len(solutions),
         "provedInfeasible": proved_infeasible,
         "solutions": solutions,
+    }
+
+
+@app.post("/api/simulate")
+def api_simulate(req: SimulateRequest) -> Dict[str, Any]:
+    node_ids = {n.node_id for n in req.nodes}
+    text_lines: List[str] = []
+    req_edges: List[EdgeModel] = []
+    for edge in req.edges:
+        if edge.from_ in node_ids and edge.to in node_ids:
+            text_lines.append(f"{edge.from_} -> {edge.to}")
+            req_edges.append(edge)
+    text = "\n".join(text_lines)
+
+    try:
+        graph = Graph.from_text(text)
+    except ValueError as e:
+        return {"error": str(e)}
+
+    result = simulate_frames(graph, max_frames=req.options.max_frames)
+
+    edge_to_id: Dict[Tuple[str, str, int], str] = {}
+    for i, e in enumerate(req_edges):
+        edge_to_id[(e.from_, e.to, i)] = e.id
+
+    node_ratios: Dict[str, Dict[str, Any]] = {}
+    for node, (num, den) in result['cycle']['node_ratios'].items():
+        g = math.gcd(num, den) if den > 0 else 1
+        node_ratios[node] = {
+            'numerator': num,
+            'denominator': den,
+            'text': f'{num}/{den}',
+            'textReduced': f'{num // g}/{den // g}' if den > 0 else '0/0',
+        }
+
+    edge_ratios: Dict[str, Dict[str, Any]] = {}
+    for edge, (num, den) in result['cycle']['edge_ratios'].items():
+        key = (edge[0], edge[1], edge[2])
+        edge_id = edge_to_id.get(key, f'{edge[0]}->{edge[1]}')
+        g = math.gcd(num, den) if den > 0 else 1
+        edge_ratios[edge_id] = {
+            'numerator': num,
+            'denominator': den,
+            'text': f'{num}/{den}',
+            'textReduced': f'{num // g}/{den // g}' if den > 0 else '0/0',
+        }
+
+    frames_json: List[Dict[str, Any]] = []
+    for f in result['frames']:
+        frame_nodes: Dict[str, Dict[str, Any]] = {}
+        for nd in f['nodes']:
+            frame_nodes[nd['id']] = {
+                'hasItem': nd['has_item'],
+                'rrIn': nd['rr_in_index'],
+                'rrOut': nd['rr_out_index'],
+            }
+        frame_edges: Dict[str, Dict[str, Any]] = {}
+        for ed in f['edges']:
+            key = (ed['from'], ed['to'], ed['idx'])
+            # ensure eid is a str (edge_to_id.get or ed['id'] may be None)
+            eid = edge_to_id.get(key, ed.get('id') or f"{ed['from']}->{ed['to']}_{ed['idx']}")
+            frame_edges[eid] = {
+                'queue': ed['queue'], 
+            }
+        frames_json.append({
+            'frame': f['frame'],
+            'nodes': frame_nodes,
+            'edges': frame_edges,
+        })
+
+    return {
+        'cycleInfo': {
+            'period': result['cycle']['period'],
+            'cycleStartFrame': result['cycle']['cycle_start_frame'],
+            'totalFrames': result['cycle']['total_frames'],
+            'warmupFrames': result['cycle']['warmup_frames'],
+            'nodeRatios': node_ratios,
+            'edgeRatios': edge_ratios,
+        },
+        'frames': frames_json,
     }
 
 

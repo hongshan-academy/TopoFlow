@@ -16,12 +16,10 @@ class NodeType(Enum):
     SPLITTER = auto()
     CONVERGER = auto()
     ISOLATED = auto()
-    CROSSING = auto()
 
 
 STRICT_PATTERNS = DEFAULT_CONFIG.strict_patterns
 PATTERNS = DEFAULT_CONFIG.patterns
-EXTENDED_PATTERNS = DEFAULT_CONFIG.extended_patterns
 
 
 class Graph(object):
@@ -36,13 +34,9 @@ class Graph(object):
     splitters: Set[Node]
     convergers: Set[Node]
     isolated: Set[Node]
-    crossings: Set[Node]
-    edge_pairs: Dict[Node, Tuple[Tuple[Edge, Edge], Tuple[Edge, Edge]]]
 
     def is_valid(self, strict: bool = False) -> bool:
         valid = STRICT_PATTERNS if strict else PATTERNS
-        if self.crossings:
-            return False
         n_source = 0
         n_sink = 0
         for in_d, out_d in self.degrees.values():
@@ -64,8 +58,6 @@ class Graph(object):
             return NodeType.SOURCE
         if out_d == 0:
             return NodeType.SINK
-        if in_d == 2 and out_d == 2:
-            return NodeType.CROSSING
         if in_d <= out_d:
             return NodeType.SPLITTER
         return NodeType.CONVERGER
@@ -89,8 +81,6 @@ class Graph(object):
         self.splitters = set()
         self.convergers = set()
         self.isolated = set()
-        self.crossings = set()
-        self.edge_pairs = {}
         for node in nodes:
             self._sync_node(node)
 
@@ -128,21 +118,14 @@ class Graph(object):
         new_graph.splitters = self.splitters.copy()
         new_graph.convergers = self.convergers.copy()
         new_graph.isolated = self.isolated.copy()
-        new_graph.crossings = self.crossings.copy()
-        new_graph.edge_pairs = {
-            k: ((p1[0], p1[1]), (p2[0], p2[1]))
-            for k, (p1, p2) in self.edge_pairs.items()
-        }
         return new_graph
 
-    def _sync_node(self, node: Node):
+    def _sync_node(self, node: Node) -> None:
         self.sources.discard(node)
         self.sinks.discard(node)
         self.splitters.discard(node)
         self.convergers.discard(node)
         self.isolated.discard(node)
-        self.crossings.discard(node)
-        in_d, out_d = self.degrees[node]
         match self.classify(node):
             case NodeType.ISOLATED:
                 self.isolated.add(node)
@@ -154,17 +137,15 @@ class Graph(object):
                 self.splitters.add(node)
             case NodeType.CONVERGER:
                 self.convergers.add(node)
-            case NodeType.CROSSING:
-                self.crossings.add(node)
 
-    def add_node(self, node: Node):
+    def add_node(self, node: Node) -> None:
         self.nodes.add(node)
         self.degrees[node] = [0, 0]
         self.isolated.add(node)
 
-    def remove_node(self, node: Node):
+    def remove_node(self, node: Node) -> None:
         affected_edges = list(self.in_edges[node] + self.out_edges[node])
-        affected_nodes = set()
+        affected_nodes: Set[Node] = set()
         for u, v in affected_edges:
             affected_nodes.add(u)
             affected_nodes.add(v)
@@ -181,12 +162,10 @@ class Graph(object):
         self.splitters.discard(node)
         self.convergers.discard(node)
         self.isolated.discard(node)
-        self.crossings.discard(node)
-        self.edge_pairs.pop(node, None)
         for n in affected_nodes:
             self._sync_node(n)
 
-    def add_edge(self, edge: Edge):
+    def add_edge(self, edge: Edge) -> None:
         u, v = edge
         if u not in self.nodes:
             self.nodes.add(u)
@@ -204,7 +183,7 @@ class Graph(object):
         self._sync_node(u)
         self._sync_node(v)
 
-    def remove_edge(self, edge: Edge):
+    def remove_edge(self, edge: Edge) -> None:
         u, v = edge
         self.edges.remove(edge)
         self.out_edges[u].remove(edge)
@@ -213,6 +192,95 @@ class Graph(object):
         self.degrees[v][0] -= 1
         self._sync_node(u)
         self._sync_node(v)
+
+    def _repair_valid(self) -> bool:
+        while not self.is_valid(strict=True):
+            sources = [n for n in self.nodes
+                       if self.degrees[n][0] == 0 and self.degrees[n][1] == 1]
+            sinks = [n for n in self.nodes
+                     if self.degrees[n][0] == 1 and self.degrees[n][1] == 0]
+            if len(sources) != 1 or len(sinks) != 1:
+                return False
+
+            std_source = sources[0]
+            std_sink = sinks[0]
+
+            action = False
+            for node in list(self.nodes):
+                in_d, out_d = self.degrees[node]
+                if (in_d == 0 and out_d > 1) or (in_d > 1 and out_d == 0):
+                    self.remove_node(node)
+                    action = True
+                    break
+            if action:
+                continue
+
+            bridgeable = None
+            for node in self.nodes:
+                if node == std_source or node == std_sink:
+                    continue
+                in_d, out_d = self.degrees[node]
+                if in_d == 1 and out_d == 1:
+                    bridgeable = node
+                    break
+            if bridgeable is None:
+                return False
+
+            in_edge = self.in_edges[bridgeable][0]
+            out_edge = self.out_edges[bridgeable][0]
+            pred = in_edge[0]
+            succ = out_edge[1]
+            if in_edge == out_edge:
+                self.remove_edge(in_edge)
+            else:
+                self.remove_edge(in_edge)
+                self.remove_edge(out_edge)
+                self.add_edge((pred, succ))
+            self.remove_node(bridgeable)
+        return self.is_valid(strict=True) and self._is_encodable()
+
+    def _is_encodable(self) -> bool:
+        for node in self.nodes:
+            in_d, out_d = self.degrees[node]
+            if node.startswith("S2_") and (in_d, out_d) != (1, 2):
+                return False
+            if node.startswith("S3_") and (in_d, out_d) != (1, 3):
+                return False
+            if node.startswith("C2_") and (in_d, out_d) != (2, 1):
+                return False
+            if node.startswith("C3_") and (in_d, out_d) != (3, 1):
+                return False
+            if node == "In" and (in_d, out_d) != (0, 1):
+                return False
+            if node == "Out" and (in_d, out_d) != (1, 0):
+                return False
+        return True
+
+    def delete_edge_valid(self, edge: Edge) -> Tuple[bool, 'Graph']:
+        g = self.copy()
+        try:
+            g.remove_edge(edge)
+        except ValueError:
+            return False, self
+        if g.is_valid(strict=True) and g._is_encodable():
+            return True, g
+        if g._repair_valid() and len(g.nodes) > 0:
+            return True, g
+        return False, self
+
+    def delete_node_valid(self, node: Node) -> Tuple[bool, 'Graph']:
+        if node in ("In", "Out"):
+            return False, self
+        g = self.copy()
+        try:
+            g.remove_node(node)
+        except (KeyError, ValueError):
+            return False, self
+        if g.is_valid(strict=True) and g._is_encodable():
+            return True, g
+        if g._repair_valid() and len(g.nodes) > 0:
+            return True, g
+        return False, self
 
     def with_added_node(self, node: Node) -> 'Graph':
         new_graph = self.copy()
@@ -234,30 +302,4 @@ class Graph(object):
         new_graph.remove_edge(edge)
         return new_graph
 
-    def contract_crossings(self) -> 'Graph':
-        nodes = set(self.nodes)
-        edges = list(self.edges)
-        for crossing_node, (pair1, pair2) in list(self.edge_pairs.items()):
-            in1, out1 = pair1
-            in2, out2 = pair2
-            nodes.discard(crossing_node)
-            for e in (in1, out1, in2, out2):
-                while e in edges:
-                    edges.remove(e)
-            edges.append((in1[0], out1[1]))
-            edges.append((in2[0], out2[1]))
-        crossing_names = {x for x in self.edge_pairs}
-        edges = [e for e in edges if e[0] not in crossing_names and e[1] not in crossing_names]
-        return Graph(nodes, edges)
 
-    def underlying_graph(self) -> 'Graph':
-        if not self.edge_pairs:
-            return Graph(self.nodes.copy(), self.edges.copy())
-        return self.contract_crossings()
-
-    def validate_underlying(self) -> bool:
-        try:
-            self.underlying_graph()
-            return True
-        except ValueError:
-            return False

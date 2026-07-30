@@ -1,5 +1,4 @@
 (function () {
-  const { TopoFlowSimulator } = window.TopoFlowSimulatorApi;
 
   const GRAPH_BOUNDS = { width: 2700, height: 1680, padding: 36 };
   const DEFAULT_VIEWPORT = { x: 0, y: 0, width: 900, height: 560 };
@@ -60,7 +59,9 @@
 
   const state = {
     graph: cloneGraph(INITIAL_GRAPH),
-    simulator: null,
+    frames: [],
+    simFrame: 0,
+    cycleInfo: null,
     selected: { kind: "node", id: "merger1" },
     mode: "select",
     fps: 100,
@@ -73,8 +74,7 @@
     blankHold: false,
     showEdgeFlowLabels: true,
     autoSolveEnabled: true,
-    autoSolveFrames: 1000,
-    initialFull: false,
+    autoSolveFrames: 100000,
     continuousSolveEnabled: true,
     continuousSolution: null,
     continuousSolutions: [],
@@ -104,7 +104,6 @@
     showEdgeFlow: document.getElementById("show-edge-flow-toggle"),
     autoSolveToggle: document.getElementById("auto-solve-toggle"),
     autoSolveFrames: document.getElementById("auto-solve-frames"),
-    initialFullToggle: document.getElementById("initial-full-toggle"),
     continuousSolveToggle: document.getElementById("continuous-solve-toggle"),
     prevSolutionBtn: document.getElementById("prev-solution-btn"),
     nextSolutionBtn: document.getElementById("next-solution-btn"),
@@ -125,8 +124,6 @@
     cycle: document.getElementById("selected-cycle"),
     history: document.getElementById("selected-history"),
     historyMeta: document.getElementById("history-meta"),
-    initialStateRow: document.getElementById("initial-state-row"),
-    initialStateRadios: [...document.querySelectorAll('input[name="initial-state"]')],
     edgeDraft: document.getElementById("edge-draft"),
     toolButtons: [...document.querySelectorAll("[data-mode-button]")],
     statusText: document.getElementById("status-text"),
@@ -134,19 +131,31 @@
 
   function main() {
     loadSavesFromStorage();
-    rebuildSimulator("已载入示例图。");
     bindEvents();
+    fetchConfig();
+    rebuildSimulator("已载入示例图。");
     render();
+  }
+
+  async function fetchConfig() {
+    try {
+      var resp = await fetch("/api/config");
+      var cfg = await resp.json();
+      if (cfg.max_frames) {
+        state.autoSolveFrames = cfg.max_frames;
+        els.autoSolveFrames.value = String(cfg.max_frames);
+      }
+    } catch (_) {}
   }
 
   function bindEvents() {
     els.play.addEventListener("click", startRunning);
     els.pause.addEventListener("click", stopRunning);
     els.step.addEventListener("click", () => {
-      if (!state.simulator) {
+      if (!state.frames.length) {
         return;
       }
-      state.simulator.stepOnce();
+      stepOnceLocal();
       render();
     });
     els.reset.addEventListener("click", () => {
@@ -162,22 +171,6 @@
     els.autoSolveToggle.addEventListener("change", () => {
       state.autoSolveEnabled = els.autoSolveToggle.checked;
       render();
-    });
-    els.initialFullToggle.addEventListener("change", () => {
-      state.initialFull = els.initialFullToggle.checked;
-      applyInitialFullToAll(state.initialFull);
-      rebuildSimulator(state.initialFull ? "已启用初始全满状态。" : "已关闭初始全满状态。");
-      render();
-    });
-    els.initialStateRadios.forEach((radio) => {
-      radio.addEventListener("change", () => {
-        if (!radio.checked || !state.selected) {
-          return;
-        }
-        setObjectInitialFull(state.selected, radio.value === "full");
-        rebuildSimulator("已修改对象初始状态。");
-        render();
-      });
     });
     els.continuousSolveToggle.addEventListener("change", () => {
       state.continuousSolveEnabled = els.continuousSolveToggle.checked;
@@ -197,7 +190,7 @@
     els.nextSolutionBtn.addEventListener("click", nextSolution);
     els.autoSolveFrames.addEventListener("input", () => {
       const value = Number.parseInt(els.autoSolveFrames.value || "0", 10);
-      state.autoSolveFrames = Number.isFinite(value) && value > 0 ? value : 0;
+      state.autoSolveFrames = Number.isFinite(value) && value >= 1 ? value : 100000;
     });
     els.saveList.addEventListener("change", () => {
       state.activeSaveId = els.saveList.value || null;
@@ -426,7 +419,7 @@
   }
 
   function startRunning() {
-    if (state.runner !== null || !state.simulator) {
+    if (state.runner !== null || !state.frames.length) {
       return;
     }
     state.runner = {
@@ -441,7 +434,7 @@
   }
 
   function runLoop(now) {
-    if (!state.runner || !state.simulator) {
+    if (!state.runner || !state.frames.length) {
       return;
     }
 
@@ -451,7 +444,7 @@
     const framesToAdvance = Math.min(5000, Math.floor(state.runner.carryFrames));
     if (framesToAdvance > 0) {
       state.runner.carryFrames -= framesToAdvance;
-      state.simulator.step(framesToAdvance);
+      stepLocal(framesToAdvance);
     }
 
     const shouldRender =
@@ -489,9 +482,6 @@
       x: clamp(point.x, GRAPH_BOUNDS.padding, GRAPH_BOUNDS.width - GRAPH_BOUNDS.padding),
       y: clamp(point.y, GRAPH_BOUNDS.padding, GRAPH_BOUNDS.height - GRAPH_BOUNDS.padding),
     };
-    if (type === "splitter" || type === "merger") {
-      node.initialFull = state.initialFull;
-    }
     state.graph.nodes.push(node);
     state.selected = { kind: "node", id: node.id };
     rebuildSimulator(`${TYPE_LABELS[type]} ${node.id} 已添加。`);
@@ -589,7 +579,6 @@
       to: toId,
       fromSlot,
       toSlot,
-      initialFull: state.initialFull,
     });
     rebuildSimulator(`已连接 ${fromId} -> ${toId}。`);
     render();
@@ -598,23 +587,79 @@
 
   function rebuildSimulator(message) {
     stopRunning();
-    state.simulator = new TopoFlowSimulator(cloneGraph(state.graph), {
-      initialFull: state.initialFull,
-    });
+    state.frames = [];
+    state.simFrame = 0;
+    state.cycleInfo = null;
     state.continuousSolution = null;
     state.continuousSolutions = [];
     state.activeSolutionIndex = 0;
     state.provedInfeasible = false;
     state.continuousSolveVersion += 1;
     ensureSelectedObject();
-    runAutoSolveIfEnabled();
-    const ci = state.simulator.globalCycleInfo;
-    state.message = ci
-      ? `${message} 周期 ${ci.period} 帧，暖机 ${ci.warmupFrames} 帧。`
-      : message;
+    state.message = message;
+    if (state.autoSolveEnabled) {
+      requestDiscreteSimulate(message);
+    } else {
+      render();
+    }
     if (state.continuousSolveEnabled) {
       requestContinuousSolve(state.continuousSolveVersion);
     }
+  }
+
+  function buildSimulateRequest() {
+    const connectedIds = new Set();
+    state.graph.edges.forEach(function (e) { connectedIds.add(e.from); connectedIds.add(e.to); });
+    const activeNodes = state.graph.nodes.filter(function (n) { return connectedIds.has(n.id); });
+    const activeEdges = state.graph.edges;
+    return {
+      nodes: activeNodes.map(function (n) { return { node_id: n.id, node_type: n.type, x: n.x, y: n.y }; }),
+      edges: activeEdges.map(function (e) { return { id: e.id, from: e.from, to: e.to }; }),
+      options: { max_frames: state.autoSolveFrames || null },
+    };
+  }
+
+  async function requestDiscreteSimulate(message) {
+    state.message = "离散模拟中...";
+    render();
+    try {
+      const response = await fetch("/api/simulate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildSimulateRequest()),
+      });
+      const data = await response.json();
+      if (!response.ok || data.error) {
+        if (!state.autoSolveEnabled) return;
+        state.frames = [];
+        state.simFrame = 0;
+        state.cycleInfo = null;
+        state.message = data.error || "模拟请求失败";
+        render();
+        return;
+      }
+      if (!state.autoSolveEnabled) {
+        return;
+      }
+      state.frames = data.frames || [];
+      state.simFrame = 0;
+      state.cycleInfo = data.cycleInfo || null;
+      if (state.cycleInfo) {
+        const ci = state.cycleInfo;
+        state.message = `${message} 周期 ${ci.period} 帧，暖机 ${ci.warmupFrames} 帧。`;
+      } else {
+        state.message = message;
+      }
+    } catch (error) {
+      if (!state.autoSolveEnabled) {
+        return;
+      }
+      state.frames = [];
+      state.simFrame = 0;
+      state.cycleInfo = null;
+      state.message = "离散模拟失败：" + error.message;
+    }
+    render();
   }
 
   async function requestContinuousSolve(version) {
@@ -679,7 +724,6 @@
       state.activeSolutionIndex = 0;
       state.continuousSolution = null;
       state.message = "连续求解失败：" + error.message;
-      showToast("连续求解失败：" + error.message, "error");
     }
     render();
   }
@@ -738,11 +782,10 @@
   }
 
   function renderControls() {
-    els.frame.textContent = state.simulator ? String(state.simulator.getSnapshot().frame) : "0";
+    els.frame.textContent = String(state.simFrame);
     els.fpsLabel.textContent = String(state.fps);
     els.autoSolveToggle.checked = state.autoSolveEnabled;
     els.autoSolveFrames.value = String(state.autoSolveFrames);
-    els.initialFullToggle.checked = state.initialFull;
     els.continuousSolveToggle.checked = state.continuousSolveEnabled;
     var solCount = state.continuousSolutions.length;
     if (solCount > 1 || state.provedInfeasible) {
@@ -769,21 +812,22 @@
   }
 
   function renderGraph() {
-    const snapshot = state.simulator ? state.simulator.getSnapshot() : { nodes: [] };
-    const runtimeMap = new Map(snapshot.nodes.map((node) => [node.id, node]));
-    const edgeRuntimeMap = new Map((snapshot.edges || []).map((edge) => [edge.id, edge]));
+    const snapshot = getCurrentSnapshot();
+    const nodeMap = snapshot.nodes || {};
+    const edgeMap = snapshot.edges || {};
     const showOccupiedEdges = !(state.runner && state.fps > HIGH_FPS_THRESHOLD);
 
     const edgesMarkup = state.graph.edges.map((edge) => {
       const pathInfo = computeEdgePath(edge);
-      const edgeRuntime = edgeRuntimeMap.get(edge.id);
-      const activeClass = showOccupiedEdges && edgeRuntime && edgeRuntime.hasItem ? " is-active" : "";
+      const edgeRt = edgeMap[edge.id];
+      const hasItem = edgeRt && edgeRt.queue && edgeRt.queue.length > 0;
+      const activeClass = showOccupiedEdges && hasItem ? " is-active" : "";
       const selectedClass =
         state.selected?.kind === "edge" && state.selected.id === edge.id ? " is-selected" : "";
       const blockedClass = state.continuousSolution?.edgeBlocked.get(edge.id) ? " is-blocked" : "";
       const edgeAnalysis =
-        state.showEdgeFlowLabels && state.autoSolveEnabled && state.simulator
-          ? state.simulator.analyzeEdge(edge.id)
+        state.showEdgeFlowLabels && state.autoSolveEnabled && state.cycleInfo
+          ? analyzeEdgeLocal(edge.id)
           : null;
       const continuousFlow = state.continuousSolution?.edgeFlows.get(edge.id) || null;
       const discreteLabel = edgeAnalysis ? computeEdgeLabelPosition(edge, continuousFlow ? -1 : 0) : null;
@@ -794,7 +838,7 @@
           <path class="edge-line" d="${pathInfo.d}"></path>
           ${
             edgeAnalysis?.flowRatio && discreteLabel
-              ? `<text class="edge-flow" x="${discreteLabel.x}" y="${discreteLabel.y}" text-anchor="middle">${edgeAnalysis.flowRatio.text}</text>`
+               ? `<text class="edge-flow" x="${discreteLabel.x}" y="${discreteLabel.y}" text-anchor="middle">${edgeAnalysis.flowRatio.textReduced ?? edgeAnalysis.flowRatio.text}</text>`
               : ""
           }
           ${
@@ -809,13 +853,13 @@
     const draftMarkup = renderDraftEdge();
 
     const nodesMarkup = state.graph.nodes.map((node) => {
-      const runtime = runtimeMap.get(node.id) || { hasItem: false };
+      const runtime = nodeMap[node.id] || { hasItem: false };
       const selectedClass =
         state.selected?.kind === "node" && state.selected.id === node.id ? " is-selected" : "";
       const busyClass = runtime.hasItem ? " has-item" : "";
       const edgeStartClass = state.draftEdgeFrom === node.id ? " is-edge-start" : "";
       const sinkAnalysis =
-        node.type === "sink" && state.simulator ? state.simulator.analyzeNode(node.id) : null;
+        node.type === "sink" && state.cycleInfo ? analyzeNodeLocal(node.id) : null;
       const continuousNodeFlow = node.type === "sink" ? state.continuousSolution?.nodeFlows.get(node.id) : null;
       return `
         <g
@@ -828,7 +872,7 @@
           <text class="node-type" text-anchor="middle" dy="14">${TYPE_LABELS[node.type]}</text>
           ${
             sinkAnalysis?.flowRatio
-              ? `<text class="node-flow" text-anchor="middle" dy="46">${sinkAnalysis.flowRatio.text}</text>`
+               ? `<text class="node-flow" text-anchor="middle" dy="46">${sinkAnalysis.flowRatio.textReduced ?? sinkAnalysis.flowRatio.text}</text>`
               : ""
           }
           ${
@@ -872,8 +916,8 @@
   }
 
   function renderSidebar() {
-    if (!state.selected || !state.simulator) {
-      els.selected.textContent = "-";
+    if (!state.selected || !state.cycleInfo) {
+      els.selected.textContent = state.selected ? state.selected.id : "-";
       els.type.textContent = "-";
       els.endpoints.textContent = "-";
       els.hasItem.textContent = "-";
@@ -881,33 +925,22 @@
       els.cycle.textContent = "-";
       els.history.textContent = "-";
       els.historyMeta.textContent = "未求解";
-      els.initialStateRow.style.display = "none";
       return;
-    }
-
-    const initialStateFull = getSelectedInitialFull();
-    if (initialStateFull === null) {
-      els.initialStateRow.style.display = "none";
-    } else {
-      els.initialStateRow.style.display = "flex";
-      els.initialStateRadios.forEach((radio) => {
-        radio.checked = radio.value === "full" ? initialStateFull : !initialStateFull;
-      });
     }
 
     const analysis =
       state.selected.kind === "node"
-        ? state.simulator.analyzeNode(state.selected.id)
-        : state.simulator.analyzeEdge(state.selected.id);
+        ? analyzeNodeLocal(state.selected.id)
+        : analyzeEdgeLocal(state.selected.id);
     const continuousFlow =
       state.selected.kind === "node"
         ? state.continuousSolution?.nodeFlows.get(state.selected.id)
         : state.continuousSolution?.edgeFlows.get(state.selected.id);
 
-    const snapshot = state.simulator.getSnapshot();
+    const snapshot = getCurrentSnapshot();
     const hasItem = state.selected.kind === "node"
-      ? Boolean(snapshot.nodes.find((n) => n.id === state.selected.id)?.hasItem)
-      : Boolean(snapshot.edges.find((e) => e.id === state.selected.id)?.hasItem);
+      ? Boolean(snapshot.nodes[state.selected.id]?.hasItem)
+      : Boolean((snapshot.edges[state.selected.id]?.queue || []).length > 0);
 
     els.selected.textContent = analysis.id;
     if (state.selected.kind === "node") {
@@ -1102,6 +1135,58 @@
     return {
       nodes: graph.nodes.map((node) => ({ ...node })),
       edges: graph.edges.map((edge) => ({ ...edge })),
+    };
+  }
+
+  function stepOnceLocal() {
+    state.simFrame += 1;
+  }
+
+  function stepLocal(n) {
+    state.simFrame += n;
+  }
+
+  function effectiveFrameIndex() {
+    if (!state.cycleInfo) {
+      return Math.min(state.simFrame, state.frames.length - 1);
+    }
+    if (state.simFrame < state.cycleInfo.warmupFrames) {
+      return state.simFrame;
+    }
+    return state.cycleInfo.warmupFrames
+      + (state.simFrame - state.cycleInfo.warmupFrames) % state.cycleInfo.period;
+  }
+
+  function getCurrentSnapshot() {
+    if (!state.frames.length) {
+      return { frame: 0, nodes: {}, edges: {} };
+    }
+    var idx = effectiveFrameIndex();
+    return state.frames[idx] || state.frames[0];
+  }
+
+  function analyzeNodeLocal(nodeId) {
+    if (!state.cycleInfo) return null;
+    const ratio = state.cycleInfo.nodeRatios[nodeId] || null;
+    const node = getNode(nodeId);
+    return {
+      id: nodeId,
+      type: node.type,
+      flowRatio: ratio || null,
+      cycleInfo: state.cycleInfo,
+    };
+  }
+
+  function analyzeEdgeLocal(edgeId) {
+    if (!state.cycleInfo) return null;
+    const ratio = state.cycleInfo.edgeRatios[edgeId] || null;
+    const edge = getEdge(edgeId);
+    return {
+      id: edgeId,
+      from: edge.from,
+      to: edge.to,
+      flowRatio: ratio || null,
+      cycleInfo: state.cycleInfo,
     };
   }
 
@@ -1398,21 +1483,29 @@
   }
 
   function forceLayout(nodes, edgeList, iterations) {
-    var attractionStrength = 0.25;
-    var repulsionStrength = 80000;
-    var idealLength = 120;
+    var k1 = 10000;
+    var k2 = 200;
+    var damp = 0.88;
+    var dt = 0.5;
+    var idealLength = 400;
     var minDist = 5;
-    iterations = iterations || 10;
+    var cap = 500;
 
     var nodeMap = {};
     for (var i = 0; i < nodes.length; i++) {
       nodeMap[nodes[i].id] = nodes[i];
     }
 
+    var vel = {};
+    for (var k = 0; k < nodes.length; k++) {
+      vel[nodes[k].id] = { vx: 0, vy: 0 };
+    }
+
+    iterations = iterations || 500;
     for (var iter = 0; iter < iterations; iter++) {
-      var forces = {};
+      var accel = {};
       for (var k = 0; k < nodes.length; k++) {
-        forces[nodes[k].id] = { fx: 0, fy: 0 };
+        accel[nodes[k].id] = { ax: 0, ay: 0 };
       }
 
       for (var m = 0; m < edgeList.length; m++) {
@@ -1423,13 +1516,11 @@
         var dx = v.x - u.x;
         var dy = v.y - u.y;
         var dist = Math.sqrt(dx * dx + dy * dy) || 1e-6;
-        var force = attractionStrength * (dist - idealLength);
-        var fx = (force * dx) / dist;
-        var fy = (force * dy) / dist;
-        forces[edge.from].fx += fx;
-        forces[edge.from].fy += fy;
-        forces[edge.to].fx -= fx;
-        forces[edge.to].fy -= fy;
+        var force = k2 * (dist - idealLength) / (dist * idealLength);
+        accel[edge.from].ax += force * dx;
+        accel[edge.from].ay += force * dy;
+        accel[edge.to].ax -= force * dx;
+        accel[edge.to].ay -= force * dy;
       }
 
       for (var a = 0; a < nodes.length; a++) {
@@ -1439,69 +1530,25 @@
           var rdx = nb.x - na.x;
           var rdy = nb.y - na.y;
           var rdist = Math.max(Math.sqrt(rdx * rdx + rdy * rdy), minDist);
-          var rforce = repulsionStrength / (rdist * rdist);
-          var rfx = (rforce * rdx) / rdist;
-          var rfy = (rforce * rdy) / rdist;
-          forces[na.id].fx -= rfx;
-          forces[na.id].fy -= rfy;
-          forces[nb.id].fx += rfx;
-          forces[nb.id].fy += rfy;
+          var rforce = k1 / (rdist * rdist * rdist);
+          accel[na.id].ax -= rforce * rdx;
+          accel[na.id].ay -= rforce * rdy;
+          accel[nb.id].ax += rforce * rdx;
+          accel[nb.id].ay += rforce * rdy;
         }
       }
 
       for (var p = 0; p < nodes.length; p++) {
         var n = nodes[p];
-        var f = forces[n.id];
-        n.x = clamp(n.x + f.fx, GRAPH_BOUNDS.padding, GRAPH_BOUNDS.width - GRAPH_BOUNDS.padding);
-        n.y = clamp(n.y + f.fy, GRAPH_BOUNDS.padding, GRAPH_BOUNDS.height - GRAPH_BOUNDS.padding);
+        var a = accel[n.id];
+        var am = Math.sqrt(a.ax * a.ax + a.ay * a.ay);
+        if (am > cap) { a.ax *= cap / am; a.ay *= cap / am; }
+        vel[n.id].vx = damp * (vel[n.id].vx + a.ax * dt);
+        vel[n.id].vy = damp * (vel[n.id].vy + a.ay * dt);
+        n.x = clamp(n.x + vel[n.id].vx * dt, GRAPH_BOUNDS.padding, GRAPH_BOUNDS.width - GRAPH_BOUNDS.padding);
+        n.y = clamp(n.y + vel[n.id].vy * dt, GRAPH_BOUNDS.padding, GRAPH_BOUNDS.height - GRAPH_BOUNDS.padding);
       }
     }
-  }
-
-  function runAutoSolveIfEnabled() {
-    if (!state.autoSolveEnabled || !state.simulator) {
-      return 0;
-    }
-    state.simulator.runUntilCycle();
-    return state.simulator.globalCycleInfo ? 1 : 0;
-  }
-
-  function applyInitialFullToAll(value) {
-    for (const node of state.graph.nodes) {
-      if (node.type === "splitter" || node.type === "merger") {
-        node.initialFull = value;
-      }
-    }
-    for (const edge of state.graph.edges) {
-      edge.initialFull = value;
-    }
-  }
-
-  function setObjectInitialFull(selection, value) {
-    if (selection.kind === "node") {
-      const node = getNode(selection.id);
-      if (node.type === "splitter" || node.type === "merger") {
-        node.initialFull = value;
-      }
-    } else {
-      const edge = getEdge(selection.id);
-      edge.initialFull = value;
-    }
-  }
-
-  function getSelectedInitialFull() {
-    if (!state.selected) {
-      return null;
-    }
-    if (state.selected.kind === "node") {
-      const node = getNode(state.selected.id);
-      if (node.type !== "splitter" && node.type !== "merger") {
-        return null;
-      }
-      return Boolean(node.initialFull ?? state.initialFull);
-    }
-    const edge = getEdge(state.selected.id);
-    return Boolean(edge.initialFull ?? state.initialFull);
   }
 
   function loadSavesFromStorage() {

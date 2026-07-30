@@ -1,0 +1,1053 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>TopoFlow GA — History Visualizer</title>
+<style>
+:root {
+  --bg: #f4efe6;
+  --panel: #fffaf1;
+  --ink: #1b1f23;
+  --muted: #5f6772;
+  --line: #d7cdbf;
+  --accent: #19324d;
+  --green: #2e8b57;
+  --red: #c84c3a;
+  --blue: #2f6fed;
+  --orange: #d98a1f;
+  --diff-add: #16a34a;
+  --diff-del: #ef4444;
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; overflow: hidden; }
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  color: var(--ink);
+  background: radial-gradient(circle at top left, rgba(255,255,255,0.65), transparent 28%),
+              linear-gradient(135deg, #efe2c7, var(--bg));
+}
+
+.layout {
+  height: 100vh;
+  display: grid;
+  grid-template-rows: 1fr 160px;
+  grid-template-columns: 260px 1fr 260px;
+  gap: 12px;
+  padding: 12px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 12px 32px rgba(72,55,24,0.07);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.left-panel { grid-row: 1; grid-column: 1; padding: 16px; overflow-y: auto; }
+.graph-panel { grid-row: 1; grid-column: 2; }
+.right-panel { grid-row: 1; grid-column: 3; padding: 16px; overflow-y: auto; }
+.chart-panel { grid-row: 2; grid-column: 1 / -1; padding: 12px 16px; }
+
+h2 { margin: 0 0 10px; font-size: 16px; }
+h3 { margin: 12px 0 6px; font-size: 13px; color: var(--muted); }
+
+.stat-row {
+  display: flex; justify-content: space-between; gap: 8px;
+  padding: 6px 0; border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.stat-row:last-child { border-bottom: 0; }
+.stat-key { color: var(--muted); }
+.stat-val { font-weight: 600; text-align: right; }
+
+button {
+  border: 0; border-radius: 8px; padding: 7px 12px;
+  background: var(--accent); color: white;
+  cursor: pointer; font-size: 13px; line-height: 1.3;
+}
+button:hover { filter: brightness(1.15); }
+button:disabled { opacity: 0.4; cursor: default; filter: none; }
+
+.nav-row {
+  display: flex; align-items: center; gap: 6px; margin: 10px 0;
+}
+.nav-row button { width: auto; flex: 0 0 auto; }
+.nav-row .gen-label { flex: 1; text-align: center; font-weight: 700; font-size: 14px; }
+
+.play-controls {
+  display: flex; gap: 6px; margin-top: 8px;
+}
+.play-controls button { flex: 1; }
+
+label { font-size: 12px; color: var(--muted); }
+input[type="range"] { width: 100%; margin: 4px 0; }
+input[type="number"], select {
+  width: 100%; border: 1px solid var(--line); border-radius: 8px;
+  padding: 6px 8px; font-size: 13px; background: white; color: var(--ink);
+}
+
+svg {
+  width: 100%; height: 100%;
+  border-radius: 12px;
+  user-select: none; -webkit-user-select: none;
+  background:
+    linear-gradient(rgba(25,50,77,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(25,50,77,0.03) 1px, transparent 1px),
+    linear-gradient(180deg, #fffdf7, #f8f1e3);
+  background-size: 24px 24px, 24px 24px, auto;
+  border: 1px solid var(--line);
+}
+
+.edge-line {
+  fill: none; stroke-width: 2.5;
+}
+.edge-line.added { stroke: var(--diff-add); stroke-width: 3; }
+.edge-line.removed { stroke: var(--diff-del); stroke-width: 3; stroke-dasharray: 8 6; opacity: 0.45; }
+.edge-line.normal { stroke: #667085; }
+
+.edge-hit { fill: none; stroke: transparent; stroke-width: 14; cursor: pointer; }
+
+.node circle { stroke: rgba(255,255,255,0.78); stroke-width: 3; }
+.node circle.normal { }
+.node circle.added { stroke: var(--diff-add); stroke-width: 4; }
+.node circle.removed { stroke: var(--diff-del); stroke-width: 4; stroke-dasharray: 6 4; opacity: 0.45; }
+.node text { fill: white; font-size: 11px; font-weight: 600; text-anchor: middle; pointer-events: none; }
+.node .nlabel { font-size: 10px; font-weight: 500; opacity: 0.9; text-anchor: middle; pointer-events: none; }
+
+.chart-panel canvas { width: 100%; height: 100%; border-radius: 8px; }
+
+.drop-zone {
+  border: 2px dashed var(--line); border-radius: 10px;
+  padding: 20px; text-align: center; color: var(--muted);
+  cursor: pointer; margin-bottom: 10px; font-size: 13px;
+}
+.drop-zone:hover { border-color: var(--accent); background: rgba(25,50,77,0.03); }
+
+.file-loaded .drop-zone { display: none; }
+
+.status-msg {
+  padding: 8px 12px; border-radius: 8px;
+  background: #eef4ed; border: 1px solid #8fba8b;
+  color: #2c5e2e; font-size: 12px; margin-bottom: 10px;
+}
+
+.chart-legend {
+  display: flex; gap: 16px; font-size: 12px;
+  position: absolute; top: 4px; right: 12px;
+}
+.chart-legend span { display: inline-flex; align-items: center; gap: 4px; }
+.chart-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+
+@media (max-width: 1100px) {
+  .layout {
+    grid-template-rows: auto 1fr auto;
+    grid-template-columns: 1fr;
+    height: auto; min-height: 100vh; overflow-y: auto;
+  }
+  .graph-panel { min-height: 400px; }
+}
+</style>
+</head>
+<body>
+
+<div class="layout">
+  <aside class="panel left-panel">
+    <h2>History Visualizer</h2>
+
+    <div class="drop-zone" id="drop-zone">
+      <div>Drop history.json here</div>
+      <div style="font-size:11px;margin-top:4px">or click to select file</div>
+    </div>
+
+    <div class="status-msg" id="status" style="display:none"></div>
+
+    <div id="controls" style="display:none">
+      <div class="stat-row">
+        <span class="stat-key">Target p/q</span>
+        <span class="stat-val" id="info-target">-</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-key">Generations</span>
+        <span class="stat-val" id="info-total-gens">-</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-key">Topo steps</span>
+        <span class="stat-val" id="info-steps">-</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-key">Elapsed</span>
+        <span class="stat-val" id="info-elapsed">-</span>
+      </div>
+
+      <div class="nav-row">
+        <button id="btn-first" title="First">|&#x2190;</button>
+        <button id="btn-prev" title="Previous">&#x2190;</button>
+        <span class="gen-label" id="gen-label">Step 0 / 0</span>
+        <button id="btn-next" title="Next">&#x2192;</button>
+        <button id="btn-last" title="Last">&#x2192;|</button>
+      </div>
+
+      <input type="range" id="gen-slider" min="0" max="0" value="0" />
+
+      <div class="play-controls">
+        <button id="btn-play">Play</button>
+        <button id="btn-pause" disabled>Pause</button>
+      </div>
+
+      <label for="speed-input">Speed: <span id="speed-label">1.0</span>s</label>
+      <input type="range" id="speed-input" min="200" max="3000" value="1000" step="100" />
+
+      <h3>Diff Mode</h3>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="diff-toggle" checked />
+        Show changes from previous step
+      </label>
+
+      <div class="stat-row">
+        <span class="stat-key">Generation</span>
+        <span class="stat-val" id="info-gen">-</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-key">Fitness Error</span>
+        <span class="stat-val" id="info-error">-</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-key">Fitness Nodes</span>
+        <span class="stat-val" id="info-nodes">-</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-key">Graph Nodes</span>
+        <span class="stat-val" id="info-gnodes">-</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-key">Graph Edges</span>
+        <span class="stat-val" id="info-edges">-</span>
+      </div>
+    </div>
+  </aside>
+
+  <main class="panel graph-panel" id="graph-panel">
+    <svg id="graph-svg" viewBox="0 0 900 560"></svg>
+  </main>
+
+  <aside class="panel right-panel" id="right-panel">
+    <h2>Node Details</h2>
+    <div id="node-detail" style="font-size:12px;color:var(--muted)">Click a node to inspect</div>
+
+    <h3>Edge List</h3>
+    <div id="edge-list" style="font-size:11px;max-height:200px;overflow-y:auto"></div>
+
+    <h3>Graph Stats</h3>
+    <div class="stat-row"><span class="stat-key">Sources</span><span class="stat-val" id="stat-src">-</span></div>
+    <div class="stat-row"><span class="stat-key">Sinks</span><span class="stat-val" id="stat-snk">-</span></div>
+    <div class="stat-row"><span class="stat-key">Splitters</span><span class="stat-val" id="stat-spl">-</span></div>
+    <div class="stat-row"><span class="stat-key">Mergers</span><span class="stat-val" id="stat-mrg">-</span></div>
+  </aside>
+
+  <div class="panel chart-panel" style="position:relative">
+    <div class="chart-legend">
+      <span><i class="chart-dot" style="background:var(--red)"></i> Best Error</span>
+      <span><i class="chart-dot" style="background:var(--orange)"></i> Avg Error</span>
+      <span><i class="chart-dot" style="background:var(--blue)"></i> Best Nodes</span>
+    </div>
+    <canvas id="chart-canvas"></canvas>
+  </div>
+</div>
+
+<input type="file" id="file-input" accept=".json" style="display:none" />
+
+<script>
+(function() {
+  var NODE_COLORS = {
+    source: "#2e8b57",
+    sink: "#c84c3a",
+    splitter: "#2f6fed",
+    merger: "#d98a1f",
+  };
+  var TYPE_LABELS = {
+    source: "Source",
+    sink: "Sink",
+    splitter: "Splitter",
+    merger: "Merger",
+  };
+  var NODE_R = 24;
+
+  var state = {
+    data: null,
+    chain: [],
+    generations: [],
+    currentIdx: 0,
+    playing: false,
+    playTimer: null,
+    playSpeed: 1000,
+    showDiff: true,
+    viewport: { x: 0, y: 0, width: 900, height: 560 },
+    pan: null,
+  };
+
+  var els = {
+    dropZone: document.getElementById("drop-zone"),
+    fileInput: document.getElementById("file-input"),
+    status: document.getElementById("status"),
+    controls: document.getElementById("controls"),
+    infoTarget: document.getElementById("info-target"),
+    infoTotalGens: document.getElementById("info-total-gens"),
+    infoSteps: document.getElementById("info-steps"),
+    infoElapsed: document.getElementById("info-elapsed"),
+    genLabel: document.getElementById("gen-label"),
+    genSlider: document.getElementById("gen-slider"),
+    btnFirst: document.getElementById("btn-first"),
+    btnPrev: document.getElementById("btn-prev"),
+    btnNext: document.getElementById("btn-next"),
+    btnLast: document.getElementById("btn-last"),
+    btnPlay: document.getElementById("btn-play"),
+    btnPause: document.getElementById("btn-pause"),
+    speedInput: document.getElementById("speed-input"),
+    speedLabel: document.getElementById("speed-label"),
+    diffToggle: document.getElementById("diff-toggle"),
+    infoGen: document.getElementById("info-gen"),
+    infoError: document.getElementById("info-error"),
+    infoNodes: document.getElementById("info-nodes"),
+    infoGnodes: document.getElementById("info-gnodes"),
+    infoEdges: document.getElementById("info-edges"),
+    graphSvg: document.getElementById("graph-svg"),
+    nodeDetail: document.getElementById("node-detail"),
+    edgeList: document.getElementById("edge-list"),
+    statSrc: document.getElementById("stat-src"),
+    statSnk: document.getElementById("stat-snk"),
+    statSpl: document.getElementById("stat-spl"),
+    statMrg: document.getElementById("stat-mrg"),
+    chartCanvas: document.getElementById("chart-canvas"),
+  };
+
+  // ── data loading ──
+
+  els.dropZone.addEventListener("click", function() { els.fileInput.click(); });
+  els.fileInput.addEventListener("change", function(e) {
+    var file = e.target.files[0];
+    if (file) loadFile(file);
+    els.fileInput.value = "";
+  });
+
+  els.dropZone.addEventListener("dragover", function(e) {
+    e.preventDefault();
+    els.dropZone.style.borderColor = "var(--accent)";
+  });
+  els.dropZone.addEventListener("dragleave", function() {
+    els.dropZone.style.borderColor = "";
+  });
+  els.dropZone.addEventListener("drop", function(e) {
+    e.preventDefault();
+    els.dropZone.style.borderColor = "";
+    var file = e.dataTransfer.files[0];
+    if (file) loadFile(file);
+  });
+
+  function canonicalizeEdges(edges) {
+    return JSON.stringify(edges.map(function(e) {
+      return e[0] < e[1] ? [e[0], e[1]] : [e[1], e[0]];
+    }).sort(function(a, b) {
+      return a[0] !== b[0] ? (a[0] < b[0] ? -1 : 1) : (a[1] < b[1] ? -1 : 1);
+    }));
+  }
+
+  function normalizeGenStep(gen) {
+    var edges = gen.best_edges || [];
+    var nodeSet = {};
+    edges.forEach(function(e) { nodeSet[e[0]] = true; nodeSet[e[1]] = true; });
+    return {
+      generation: gen.gen,
+      graph: {
+        nodes: Object.keys(nodeSet),
+        edges: edges.slice(),
+      },
+      fitness: {
+        error: gen.best_error,
+        nodes: gen.best_nodes,
+      },
+      graph_nodes: Object.keys(nodeSet).length,
+      graph_edges: edges.length,
+    };
+  }
+
+  function buildChain(generations) {
+    var chain = [];
+    var prevCanonical = null;
+    for (var i = 0; i < generations.length; i++) {
+      var gen = generations[i];
+      if (!gen.best_edges || !gen.best_edges.length) continue;
+      var canonical = canonicalizeEdges(gen.best_edges);
+      if (canonical === prevCanonical) continue;
+      prevCanonical = canonical;
+      chain.push(normalizeGenStep(gen));
+    }
+    return chain;
+  }
+
+  function loadFile(file) {
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      try {
+        var json = JSON.parse(e.target.result);
+        var generations = json.generations;
+        if (!generations || !Array.isArray(generations) || !generations.length) {
+          showStatus("Invalid history.json: missing or empty 'generations' array", true);
+          return;
+        }
+        init(json);
+      } catch (err) {
+        console.error("loadFile error:", err.message);
+        showStatus("Failed to parse JSON: " + err.message, true);
+      }
+    };
+    reader.onerror = function() {
+      showStatus("Failed to read file", true);
+    };
+    reader.readAsText(file);
+  }
+
+  function init(json) {
+    var generations = json.generations;
+    if (!generations || !generations.length) {
+      showStatus("No generations data found", true);
+      return;
+    }
+
+    var chain = buildChain(generations);
+    if (!chain.length) {
+      showStatus("No generations with valid graph edges found", true);
+      return;
+    }
+
+    state.data = json;
+    state.generations = generations;
+    state.chain = chain;
+    state.currentIdx = chain.length - 1;
+    state.playing = false;
+
+    els.infoTarget.textContent = json.target ? json.target.p + "/" + json.target.q : "-";
+    els.infoTotalGens.textContent = String(generations.length);
+    els.infoSteps.textContent = String(chain.length);
+    els.infoElapsed.textContent = String(Math.round((json.elapsed_sec || 0) * 10) / 10) + "s";
+
+    els.genSlider.max = chain.length - 1;
+    els.genSlider.value = state.currentIdx;
+
+    document.body.classList.add("file-loaded");
+    els.controls.style.display = "";
+    els.dropZone.style.display = "none";
+    showStatus("Loaded " + chain.length + " topo steps from " + generations.length + " generations", false);
+
+    updateAll();
+  }
+
+  // ── navigation ──
+
+  function goTo(idx) {
+    state.currentIdx = Math.max(0, Math.min(state.chain.length - 1, idx));
+    updateAll();
+  }
+
+  els.genSlider.addEventListener("input", function() { goTo(Number(els.genSlider.value)); });
+  els.btnFirst.addEventListener("click", function() { goTo(0); });
+  els.btnPrev.addEventListener("click", function() { goTo(state.currentIdx - 1); });
+  els.btnNext.addEventListener("click", function() { goTo(state.currentIdx + 1); });
+  els.btnLast.addEventListener("click", function() { goTo(state.chain.length - 1); });
+
+  els.btnPlay.addEventListener("click", function() {
+    if (state.currentIdx >= state.chain.length - 1) goTo(0);
+    state.playing = true;
+    els.btnPlay.disabled = true;
+    els.btnPause.disabled = false;
+    scheduleNext();
+  });
+
+  els.btnPause.addEventListener("click", function() {
+    state.playing = false;
+    if (state.playTimer) clearTimeout(state.playTimer);
+    els.btnPlay.disabled = false;
+    els.btnPause.disabled = true;
+  });
+
+  function scheduleNext() {
+    if (!state.playing) return;
+    state.playTimer = setTimeout(function() {
+      if (state.currentIdx < state.chain.length - 1) {
+        goTo(state.currentIdx + 1);
+        scheduleNext();
+      } else {
+        state.playing = false;
+        els.btnPlay.disabled = false;
+        els.btnPause.disabled = true;
+      }
+    }, state.playSpeed);
+  }
+
+  els.speedInput.addEventListener("input", function() {
+    state.playSpeed = Number(els.speedInput.value);
+    els.speedLabel.textContent = (state.playSpeed / 1000).toFixed(1);
+  });
+
+  els.diffToggle.addEventListener("change", function() {
+    state.showDiff = els.diffToggle.checked;
+    renderGraph();
+  });
+
+  document.addEventListener("keydown", function(e) {
+    if (e.target.tagName === "INPUT") return;
+    if (e.key === "ArrowLeft") { e.preventDefault(); goTo(state.currentIdx - 1); }
+    if (e.key === "ArrowRight") { e.preventDefault(); goTo(state.currentIdx + 1); }
+    if (e.key === " ") { e.preventDefault(); els.btnPlay.click(); }
+  });
+
+  // ── SVG interaction ──
+
+  els.graphSvg.addEventListener("pointerdown", function(e) {
+    var point = getSvgPoint(e);
+    var nodeEl = e.target.closest("[data-node-id]");
+    if (nodeEl) {
+      showNodeDetail(nodeEl.getAttribute("data-node-id"));
+      return;
+    }
+    state.pan = { sx: point.x, sy: point.y, vx: state.viewport.x, vy: state.viewport.y };
+  });
+
+  document.addEventListener("pointermove", function(e) {
+    if (!state.pan) return;
+    var point = getSvgPoint(e);
+    state.viewport.x = state.pan.vx - (point.x - state.pan.sx);
+    state.viewport.y = state.pan.vy - (point.y - state.pan.sy);
+    renderGraph();
+  });
+
+  document.addEventListener("pointerup", function() { state.pan = null; });
+
+  els.graphSvg.addEventListener("wheel", function(e) {
+    e.preventDefault();
+    var rect = els.graphSvg.getBoundingClientRect();
+    var lx = e.clientX - rect.left;
+    var ly = e.clientY - rect.top;
+    var ax = state.viewport.x + (lx / rect.width) * state.viewport.width;
+    var ay = state.viewport.y + (ly / rect.height) * state.viewport.height;
+    var scale = state.viewport.width / 2700;
+    var factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+    var ns = Math.max(0.5, Math.min(4, scale * factor));
+    state.viewport.width = 2700 / ns;
+    state.viewport.height = 1680 / ns;
+    state.viewport.x = ax - (lx / rect.width) * state.viewport.width;
+    state.viewport.y = ay - (ly / rect.height) * state.viewport.height;
+    renderGraph();
+  }, { passive: false });
+
+  function getSvgPoint(e) {
+    var m = els.graphSvg.getScreenCTM();
+    if (!m) return { x: 0, y: 0 };
+    var pt = new DOMPoint(e.clientX, e.clientY).matrixTransform(m.inverse());
+    return { x: pt.x, y: pt.y };
+  }
+
+  // ── graph rendering ──
+
+  function getStep(idx) {
+    return state.chain[idx] || null;
+  }
+
+  function graphDiff(cur, prev) {
+    if (!prev || !state.showDiff) return { addedNodes: {}, removedNodes: {}, addedEdges: {}, removedEdges: {} };
+    var curNodes = toSet(cur.graph.nodes);
+    var prevNodes = toSet(prev.graph.nodes);
+    var curEdges = toSet(cur.graph.edges.map(function(e) { return e[0] + "->" + e[1]; }));
+    var prevEdges = toSet(prev.graph.edges.map(function(e) { return e[0] + "->" + e[1]; }));
+    return {
+      addedNodes: setDiff(curNodes, prevNodes),
+      removedNodes: setDiff(prevNodes, curNodes),
+      addedEdges: setDiff(curEdges, prevEdges),
+      removedEdges: setDiff(prevEdges, curEdges),
+    };
+  }
+
+  function toSet(arr) {
+    var s = {};
+    arr.forEach(function(v) { s[v] = true; });
+    return s;
+  }
+
+  function setDiff(a, b) {
+    var d = {};
+    for (var k in a) { if (a.hasOwnProperty(k) && !b[k]) d[k] = true; }
+    return d;
+  }
+
+  function layoutGraph(nodes, edges) {
+    var nlist = nodes.map(function(id) { return { id: id }; });
+    var edgeMap = edges.map(function(e) { return { from: e[0], to: e[1] }; });
+
+    var inDeg = {}, outDeg = {}, adj = {};
+    nlist.forEach(function(n) { inDeg[n.id] = 0; outDeg[n.id] = 0; adj[n.id] = []; });
+    edgeMap.forEach(function(e) {
+      outDeg[e.from] += 1;
+      inDeg[e.to] += 1;
+      adj[e.from].push(e.to);
+    });
+
+    var depth = {};
+    function dfs(n, d, path) {
+      if (path.has(n)) return;
+      path.add(n);
+      depth[n] = Math.max(depth[n] || 0, d);
+      (adj[n] || []).forEach(function(t) { dfs(t, d + 1, path); });
+      path.delete(n);
+    }
+    nlist.forEach(function(n) { if (inDeg[n.id] === 0) dfs(n.id, 0, new Set()); });
+    nlist.forEach(function(n) { if (depth[n.id] === undefined) depth[n.id] = 0; });
+
+    var layers = {};
+    var maxLayer = 0;
+    nlist.forEach(function(n) {
+      var d = depth[n.id];
+      if (!layers[d]) layers[d] = [];
+      layers[d].push(n.id);
+      if (layers[d].length > maxLayer) maxLayer = layers[d].length;
+    });
+
+    var layerKeys = Object.keys(layers).map(Number).sort(function(a, b) { return a - b; });
+    var sx = 2700 / Math.max(layerKeys.length + 1, 2);
+    var sy = 1680 / Math.max(maxLayer + 1, 2);
+    var pad = 50;
+    var pos = {};
+    nlist.forEach(function(n) {
+      var d = depth[n.id];
+      var col = layerKeys.indexOf(d);
+      var row = layers[d].indexOf(n.id);
+      pos[n.id] = {
+        x: pad + sx * (col + 1),
+        y: pad + sy * (row + 1),
+      };
+    });
+
+    var vel = {};
+    nlist.forEach(function(n) { vel[n.id] = { vx: 0, vy: 0 }; });
+
+    var k1 = 10000;
+    var k2 = 200;
+    var damp = 0.88;
+    var dt = 0.5;
+    var ideal = 400;
+    var cap = 500;
+
+    for (var iter = 0; iter < 500; iter++) {
+      var accel = {};
+      nlist.forEach(function(n) { accel[n.id] = { ax: 0, ay: 0 }; });
+
+      edgeMap.forEach(function(e) {
+        var u = pos[e.from], v = pos[e.to];
+        if (!u || !v) return;
+        var dx = v.x - u.x, dy = v.y - u.y;
+        var dist = Math.hypot(dx, dy) || 1e-6;
+        var f = k2 * (dist - ideal) / (dist * ideal);
+        accel[e.from].ax += f * dx;
+        accel[e.from].ay += f * dy;
+        accel[e.to].ax -= f * dx;
+        accel[e.to].ay -= f * dy;
+      });
+
+      for (var a = 0; a < nlist.length; a++) {
+        for (var b = a + 1; b < nlist.length; b++) {
+          var na = nlist[a], nb = nlist[b];
+          var u = pos[na.id], v = pos[nb.id];
+          var dx = v.x - u.x, dy = v.y - u.y;
+          var dist = Math.max(Math.hypot(dx, dy), 5);
+          var f = k1 / (dist * dist * dist);
+          accel[na.id].ax -= f * dx;
+          accel[na.id].ay -= f * dy;
+          accel[nb.id].ax += f * dx;
+          accel[nb.id].ay += f * dy;
+        }
+      }
+
+      nlist.forEach(function(n) {
+        var a = accel[n.id];
+        var am = Math.hypot(a.ax, a.ay);
+        if (am > cap) { a.ax *= cap / am; a.ay *= cap / am; }
+        vel[n.id].vx = damp * (vel[n.id].vx + a.ax * dt);
+        vel[n.id].vy = damp * (vel[n.id].vy + a.ay * dt);
+        pos[n.id].x = Math.max(pad, Math.min(2700 - pad, pos[n.id].x + vel[n.id].vx * dt));
+        pos[n.id].y = Math.max(pad, Math.min(1680 - pad, pos[n.id].y + vel[n.id].vy * dt));
+      });
+    }
+
+    return pos;
+  }
+
+  function inferType(nid, inDeg, outDeg) {
+    if (inDeg === 0 && outDeg === 1) return "source";
+    if (inDeg === 1 && outDeg === 0) return "sink";
+    if (inDeg <= outDeg) return "splitter";
+    return "merger";
+  }
+
+  function fitNodesViewport(pos, nodeIds) {
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    nodeIds.forEach(function(n) {
+      var p = pos[n];
+      if (!p) return;
+      minX = Math.min(minX, p.x);
+      minY = Math.min(minY, p.y);
+      maxX = Math.max(maxX, p.x);
+      maxY = Math.max(maxY, p.y);
+    });
+    if (!isFinite(minX)) return null;
+
+    var pad = 150;
+    var vw = maxX - minX + pad * 2;
+    var vh = maxY - minY + pad * 2;
+    var vx = minX - pad;
+    var vy = minY - pad;
+
+    var bw = 2700, bh = 1680;
+    var svgAspect = 900 / 560;
+    var w, h, x, y;
+
+    if (vw / vh > svgAspect) {
+      w = vw;
+      h = vw / svgAspect;
+      x = vx;
+      y = vy - (h - vh) / 2;
+    } else {
+      h = vh;
+      w = vh * svgAspect;
+      y = vy;
+      x = vx - (w - vw) / 2;
+    }
+
+    x = Math.max(-pad, Math.min(bw - w + pad, x));
+    y = Math.max(-pad, Math.min(bh - h + pad, y));
+    w = Math.min(w, bw + pad * 2);
+    h = Math.min(h, bh + pad * 2);
+
+    return { x: x, y: y, width: w, height: h };
+  }
+
+  function renderGraph() {
+    var step = getStep(state.currentIdx);
+    if (!step) { els.graphSvg.innerHTML = ""; return; }
+
+    try {
+    var prevStep = state.currentIdx > 0 ? getStep(state.currentIdx - 1) : null;
+    var diff = graphDiff(step, prevStep);
+
+    var nodes = step.graph.nodes;
+    var edges = step.graph.edges;
+
+    var allNodes = nodes.slice();
+    if (prevStep && state.showDiff) {
+      prevStep.graph.nodes.forEach(function(n) {
+        if (allNodes.indexOf(n) === -1) allNodes.push(n);
+      });
+    }
+    var allEdges = edges.slice();
+    if (prevStep && state.showDiff) {
+      prevStep.graph.edges.forEach(function(e) {
+        if (!allEdges.some(function(ae) { return ae[0] === e[0] && ae[1] === e[1]; })) {
+          allEdges.push(e);
+        }
+      });
+    }
+
+    var pos = layoutGraph(allNodes, allEdges);
+
+    var fit = fitNodesViewport(pos, nodes);
+    if (fit) {
+      state.viewport = fit;
+    }
+
+    var inDeg = {}, outDeg = {};
+    nodes.forEach(function(n) { inDeg[n] = 0; outDeg[n] = 0; });
+    edges.forEach(function(e) { outDeg[e[0]] = (outDeg[e[0]] || 0) + 1; inDeg[e[1]] = (inDeg[e[1]] || 0) + 1; });
+
+    var edgeMarkup = edges.map(function(e) {
+      var from = pos[e[0]], to = pos[e[1]];
+      if (!from || !to) return "";
+      var dx = to.x - from.x, dy = to.y - from.y;
+      var len = Math.hypot(dx, dy) || 1;
+      var ux = dx / len, uy = dy / len;
+      var x1 = from.x + ux * NODE_R, y1 = from.y + uy * NODE_R;
+      var x2 = to.x - ux * (NODE_R + 6), y2 = to.y - uy * (NODE_R + 6);
+      var ek = e[0] + "->" + e[1];
+      var cls = "normal";
+      if (diff.addedEdges[ek]) cls = "added";
+      return '<g data-edge-key="' + ek + '">' +
+        '<path class="edge-hit" d="M' + x1 + ' ' + y1 + ' L' + x2 + ' ' + y2 + '"></path>' +
+        '<line class="edge-line ' + cls + '" x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '" ' +
+        'marker-end="url(#arrow' + (cls === 'added' ? '-add' : '') + ')"></line>' +
+        '</g>';
+    });
+
+    var removedEdgeMarkup = "";
+    if (prevStep && state.showDiff) {
+      var parts = [];
+      prevStep.graph.edges.forEach(function(e) {
+        var ek = e[0] + "->" + e[1];
+        if (!diff.removedEdges[ek]) return;
+        var from = pos[e[0]], to = pos[e[1]];
+        if (!from || !to) return;
+        var dx = to.x - from.x, dy = to.y - from.y;
+        var len = Math.hypot(dx, dy) || 1;
+        var ux = dx / len, uy = dy / len;
+        var x1 = from.x + ux * NODE_R, y1 = from.y + uy * NODE_R;
+        var x2 = to.x - ux * (NODE_R + 6), y2 = to.y - uy * (NODE_R + 6);
+        parts.push('<line class="edge-line removed" x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"></line>');
+      });
+      removedEdgeMarkup = parts.join("");
+    }
+
+    var nodeMarkup = nodes.map(function(n) {
+      var p = pos[n];
+      if (!p) return "";
+      var type = inferType(n, inDeg[n] || 0, outDeg[n] || 0);
+      var cls = "normal";
+      if (diff.addedNodes[n]) cls = "added";
+      return '<g class="node" data-node-id="' + n + '" transform="translate(' + p.x + ', ' + p.y + ')" style="cursor:pointer">' +
+        '<circle class="' + cls + '" r="' + NODE_R + '" fill="' + NODE_COLORS[type] + '" data-node-id="' + n + '"></circle>' +
+        '<text dy="-1">' + n + '</text>' +
+        '<text class="nlabel" dy="13">' + TYPE_LABELS[type] + '</text>' +
+        '</g>';
+    });
+
+    var removedNodeMarkup = "";
+    if (prevStep && state.showDiff) {
+      var parts = [];
+      prevStep.graph.nodes.forEach(function(n) {
+        if (!diff.removedNodes[n]) return;
+        var p = pos[n];
+        if (!p) return;
+        var type = inferType(n, inDeg[n] || 0, outDeg[n] || 0);
+        parts.push('<g class="node" data-node-id="' + n + '" transform="translate(' + p.x + ', ' + p.y + ')">' +
+          '<circle class="removed" r="' + NODE_R + '" fill="' + NODE_COLORS[type] + '" data-node-id="' + n + '"></circle>' +
+          '<text dy="-1">' + n + '</text>' +
+          '<text class="nlabel" dy="13">' + TYPE_LABELS[type] + '</text>' +
+          '</g>');
+      });
+      removedNodeMarkup = parts.join("");
+    }
+
+    var viewBoxStr = state.viewport.x + ' ' + state.viewport.y + ' ' + state.viewport.width + ' ' + state.viewport.height;
+    els.graphSvg.setAttribute("viewBox", viewBoxStr);
+    els.graphSvg.innerHTML =
+      '<defs>' +
+        '<marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">' +
+          '<path d="M0,0 L0,6 L8,3 z" fill="#667085"></path>' +
+        '</marker>' +
+        '<marker id="arrow-add" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">' +
+          '<path d="M0,0 L0,6 L8,3 z" fill="' + TO_CSS_VAR('--diff-add') + '"></path>' +
+        '</marker>' +
+      '</defs>' +
+      '<g class="edges">' + removedEdgeMarkup + edgeMarkup.join("") + '</g>' +
+      '<g class="nodes">' + removedNodeMarkup + nodeMarkup.join("") + '</g>';
+
+    els.edgeList.innerHTML = edges.map(function(e) {
+      return '<div style="padding:1px 0">' + e[0] + ' \u2192 ' + e[1] + '</div>';
+    }).join("");
+
+    var typeCount = {};
+    nodes.forEach(function(n) {
+      var t = inferType(n, inDeg[n] || 0, outDeg[n] || 0);
+      typeCount[t] = (typeCount[t] || 0) + 1;
+    });
+    els.statSrc.textContent = String(typeCount.source || 0);
+    els.statSnk.textContent = String(typeCount.sink || 0);
+    els.statSpl.textContent = String(typeCount.splitter || 0);
+    els.statMrg.textContent = String(typeCount.merger || 0);
+
+    } catch (err) {
+      console.error("renderGraph error:", err.message, err.stack);
+      els.graphSvg.innerHTML = '<text x="50" y="50" fill="red" font-size="14">Render error: ' + err.message + '</text>';
+    }
+  }
+
+  function TO_CSS_VAR(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  function showNodeDetail(nid) {
+    var step = getStep(state.currentIdx);
+    if (!step) return;
+    var nodes = step.graph.nodes;
+    var edges = step.graph.edges;
+    var inEs = edges.filter(function(e) { return e[1] === nid; });
+    var outEs = edges.filter(function(e) { return e[0] === nid; });
+    var inDeg = inEs.length, outDeg = outEs.length;
+    var type = inferType(nid, inDeg, outDeg);
+    els.nodeDetail.innerHTML =
+      '<strong>' + nid + '</strong><br/>' +
+      'Type: ' + TYPE_LABELS[type] + '<br/>' +
+      'In-degree: ' + inDeg + '<br/>' +
+      'Out-degree: ' + outDeg + '<br/>' +
+      (inEs.length ? 'In: ' + inEs.map(function(e) { return e[0]; }).join(", ") + '<br/>' : '') +
+      (outEs.length ? 'Out: ' + outEs.map(function(e) { return e[1]; }).join(", ") : '');
+  }
+
+  // ── fitness chart (from generations data) ──
+
+  function renderChart() {
+    var canvas = els.chartCanvas;
+    var rect = canvas.parentElement.getBoundingClientRect();
+    canvas.width = rect.width - 32;
+    canvas.height = rect.height - 16;
+    var ctx = canvas.getContext("2d");
+    var w = canvas.width, h = canvas.height;
+    if (w <= 0 || h <= 0) return;
+
+    ctx.clearRect(0, 0, w, h);
+
+    var gens = state.generations;
+    if (!gens || !gens.length) return;
+
+    var pad = { top: 10, right: 12, bottom: 20, left: 50 };
+    var pw = w - pad.left - pad.right;
+    var ph = h - pad.top - pad.bottom;
+    if (pw <= 0 || ph <= 0) return;
+
+    var bestErrs = gens.map(function(g) { return g.best_error; });
+    var avgErrs = gens.map(function(g) { return g.avg_error; });
+    var bestNodes = gens.map(function(g) { return g.best_nodes; });
+
+    var maxErr = Math.max.apply(null, bestErrs.concat([1]));
+    var minErr = Math.min.apply(null, bestErrs.concat([0]));
+    var maxN = Math.max.apply(null, bestNodes.concat([1]));
+    var minN = Math.min.apply(null, bestNodes.concat([0]));
+
+    function x(i) { return pad.left + (i / Math.max(gens.length - 1, 1)) * pw; }
+    function ye(v) { return pad.top + ph - ((v - minErr) / Math.max(maxErr - minErr, 1)) * ph; }
+    function yn(v) { return pad.top + ph - ((v - minN) / Math.max(maxN - minN, 1)) * ph; }
+
+    // grid
+    ctx.strokeStyle = "#e5e0d5";
+    ctx.lineWidth = 0.5;
+    for (var i = 0; i <= 4; i++) {
+      var yy = pad.top + (i / 4) * ph;
+      ctx.beginPath(); ctx.moveTo(pad.left, yy); ctx.lineTo(w - pad.right, yy); ctx.stroke();
+    }
+
+    // axes
+    ctx.strokeStyle = "#bbb";
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(pad.left, pad.top); ctx.lineTo(pad.left, h - pad.bottom); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(pad.left, h - pad.bottom); ctx.lineTo(w - pad.right, h - pad.bottom); ctx.stroke();
+
+    // best_error line
+    ctx.strokeStyle = "#c84c3a";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    gens.forEach(function(g, i) {
+      var v = ye(g.best_error);
+      if (i === 0) ctx.moveTo(x(i), v); else ctx.lineTo(x(i), v);
+    });
+    ctx.stroke();
+
+    // avg_error line
+    ctx.strokeStyle = "#d98a1f";
+    ctx.lineWidth = 1.0;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    gens.forEach(function(g, i) {
+      var v = ye(g.avg_error);
+      if (i === 0) ctx.moveTo(x(i), v); else ctx.lineTo(x(i), v);
+    });
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // best_nodes line
+    ctx.strokeStyle = "#2f6fed";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    gens.forEach(function(g, i) {
+      var v = yn(g.best_nodes);
+      if (i === 0) ctx.moveTo(x(i), v); else ctx.lineTo(x(i), v);
+    });
+    ctx.stroke();
+
+    // current generation marker
+    var step = getStep(state.currentIdx);
+    if (step && step.generation < gens.length) {
+      var gx = x(step.generation);
+      ctx.strokeStyle = "rgba(0,0,0,0.25)";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.moveTo(gx, pad.top); ctx.lineTo(gx, h - pad.bottom); ctx.stroke();
+      ctx.setLineDash([]);
+
+      var gen = gens[step.generation];
+      if (gen) {
+        var ey = ye(gen.best_error);
+        ctx.fillStyle = "#c84c3a";
+        ctx.beginPath(); ctx.arc(gx, ey, 4, 0, Math.PI * 2); ctx.fill();
+
+        var ny = yn(gen.best_nodes);
+        ctx.fillStyle = "#2f6fed";
+        ctx.beginPath(); ctx.arc(gx, ny, 4, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+
+    // draw vertical markers for every topo-change step
+    ctx.strokeStyle = "rgba(0,0,0,0.08)";
+    ctx.lineWidth = 1;
+    state.chain.forEach(function(s) {
+      if (s.generation < gens.length) {
+        var sx = x(s.generation);
+        ctx.beginPath(); ctx.moveTo(sx, pad.top + 2); ctx.lineTo(sx, h - pad.bottom - 2); ctx.stroke();
+      }
+    });
+  }
+
+  // ── update all ──
+
+  function updateAll() {
+    var step = getStep(state.currentIdx);
+    if (!step) return;
+
+    els.genSlider.value = state.currentIdx;
+    els.genLabel.textContent = "Step " + (state.currentIdx + 1) + " / " + state.chain.length;
+    els.infoGen.textContent = "Gen " + step.generation;
+    els.infoError.textContent = String(Math.round(step.fitness.error));
+    els.infoNodes.textContent = String(step.fitness.nodes);
+    els.infoGnodes.textContent = String(step.graph_nodes);
+    els.infoEdges.textContent = String(step.graph_edges);
+
+    renderGraph();
+    renderChart();
+  }
+
+  function showStatus(msg, isError) {
+    els.status.style.display = "";
+    els.status.textContent = msg;
+    els.status.style.background = isError ? "#fce4e4" : "#eef4ed";
+    els.status.style.borderColor = isError ? "#e8a0a0" : "#8fba8b";
+    els.status.style.color = isError ? "#8b2020" : "#2c5e2e";
+  }
+
+  // ── init ──
+
+  window.addEventListener("resize", renderChart);
+
+  // auto-load from URL parameter
+  var urlParams = new URLSearchParams(window.location.search);
+  var fileUrl = urlParams.get("file");
+  if (fileUrl) {
+    fetch(fileUrl)
+      .then(function(r) { return r.json(); })
+      .then(function(json) { init(json); })
+      .catch(function(err) { showStatus("Failed to load " + fileUrl + ": " + err.message, true); });
+  }
+})();
+</script>
+</body>
+</html>

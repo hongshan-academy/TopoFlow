@@ -2,52 +2,54 @@ import concurrent.futures as cf
 import random
 import time
 from functools import partial
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Literal, Optional, Set, Tuple
 
 from deap import base, creator, tools
 from tqdm import tqdm
 
-from graph import Graph
 from config import DEFAULT_CONFIG as _cfg
 
+from ga.chromosome import make_random_chromosome, decode
+from ga.crossover import crossover_pmx
 from ga.fitness import make_evaluate, evaluate_cached
-from ga.generation import generate_strict_graph
+from ga.history import History
 from ga.mutation import MUTATION_FNS
-from ga.utils import edges_to_tuple, tuple_to_graph
 
 creator.create("FitnessMin", base.Fitness, weights=(-1.0, -1.0))
 creator.create("Individual", tuple, fitness=creator.FitnessMin)
 
-# ── Worker-pool globals (set by _worker_init in each process) ──
 _worker_eval_fn = None
 
 
-def _worker_init(target_pq: Tuple[int, int], threads: int, max_denominator: int = 10000):
+def _worker_init(target_pq: Tuple[int, int], threads: int, max_denominator: int = 10000, mode: Literal['MILP', 'simulation', 'mixed'] = 'MILP') -> None:
     global _worker_eval_fn
-    _worker_eval_fn = make_evaluate(target_pq, threads, max_denominator=max_denominator)
+    _worker_eval_fn = make_evaluate(target_pq, threads, max_denominator=max_denominator, mode=mode)
 
 
-def _eval_one(edges_tuple: Tuple[Tuple[str, str], ...]) -> Tuple[float, int]:
+def _eval_one(chromosome: Tuple[int, ...]) -> Tuple[float, int]:
     global _worker_eval_fn
     try:
         if _worker_eval_fn is not None:
-            return _worker_eval_fn(edges_tuple)
-        return evaluate_cached(edges_tuple, (0, 1), 1)
+            return _worker_eval_fn(chromosome)  # type: ignore[no-any-return]
+        return evaluate_cached(chromosome, (0, 1), 1)
     except Exception:
         return (float("inf"), 0)
 
 
-# ── Individual helpers ──
-
 def _generate_random_individual() -> creator.Individual:
-    n_internal = random.choices(
-        _cfg.internal_nodes_choices,
-        weights=_cfg.internal_nodes_weights,
-        k=1,
-    )[0]
-    graph = generate_strict_graph(n_internal)
-    assert graph.is_valid(strict=True), "Generated invalid graph"
-    return creator.Individual(edges_to_tuple(graph))
+    for _ in range(_cfg.individual_retries):
+        n_internal = random.choices(
+            _cfg.internal_nodes_choices,
+            weights=_cfg.internal_nodes_weights,
+            k=1,
+        )[0]
+        chrom = make_random_chromosome(n_internal)
+        g = decode(chrom)
+        if g.is_valid(strict=True) and len(g.edges) <= _cfg.max_edges:
+            return creator.Individual(chrom)
+    n_internal = min(_cfg.internal_nodes_choices)
+    chrom = make_random_chromosome(n_internal)
+    return creator.Individual(chrom)
 
 
 def _mutate_wrapper(
@@ -58,50 +60,63 @@ def _mutate_wrapper(
     for _ in range(max_tries):
         fn = random.choices(MUTATION_FNS, weights=weights, k=1)[0]
         result = fn(individual)
-        if result is not None:
+        g = decode(result)
+        if g.is_valid(strict=True) and len(g.edges) <= _cfg.max_edges:
             return (creator.Individual(result),)
     return (individual,)
 
 
-# ── Evolution with async evaluation ──
-
 def _evolve(
-    population: list,
+    population: List[creator.Individual],
     toolbox: base.Toolbox,
     ngen: int,
     mutation_rate: float,
+    crossover_rate: float,
     threads: int,
     executor: cf.ProcessPoolExecutor,
     elitism_count: int = 0,
     immigration_rate: float = 0.0,
     eval_timeout: Optional[float] = None,
-) -> creator.Individual:
+    history: Optional[History] = None,
+) -> tools.HallOfFame:
     hof = tools.HallOfFame(5)
     pop_size = len(population)
+    n_workers = executor._max_workers if hasattr(executor, '_max_workers') else 1
 
     _immig_rate = max(1, int(pop_size * immigration_rate)) if immigration_rate > 0 else 0
 
-    pending: Dict[cf.Future, int] = {}
+    pending: Dict[cf.Future[Tuple[float, int]], int] = {}
+    stagnation = 0
+    best_ever_err = float("inf")
 
     pbar = tqdm(total=ngen, desc="Evolving", unit="gen", dynamic_ncols=True)
 
     for gen in range(ngen):
         t0 = time.perf_counter()
 
-        # ── 1. harvest already-completed futures (non-blocking) ──
+        def _harvest_one(fut: cf.Future[Tuple[float, int]]) -> bool:
+            idx = pending.pop(fut)
+            fitness = fut.result()
+            if fitness[0] == float("inf") and random.random() >= _cfg.infeasible_throughput:
+                new_ind = toolbox.individual()
+                population[idx] = new_ind
+                new_fut = executor.submit(_eval_one, tuple(new_ind))
+                pending[new_fut] = idx
+                return False
+            population[idx].fitness.values = fitness
+            return True
+
         n_harvested = 0
         for fut in [f for f in pending if f.done()]:
-            idx = pending.pop(fut)
-            population[idx].fitness.values = fut.result()
-            n_harvested += 1
+            if _harvest_one(fut):
+                n_harvested += 1
 
-        # ── 2. dynamic wait: harvest until enough ready ──
         if pending:
             t_wait = time.perf_counter()
             while pending:
-                pending_idxs = set(pending.values())
-                ready_check = [ind for i, ind in enumerate(population) if i not in pending_idxs]
-                desired_ready = max(elitism_count + 1, pop_size - executor._max_workers)
+                pending_idxs_set: Set[int] = set(pending.values())
+                ready_check = [ind for i, ind in enumerate(population) if i not in pending_idxs_set]
+                desired_ready = max(elitism_count + 1, pop_size - n_workers)
                 if len(ready_check) >= desired_ready:
                     break
                 if eval_timeout is not None:
@@ -112,43 +127,46 @@ def _evolve(
                 else:
                     done, _ = cf.wait(list(pending), return_when=cf.FIRST_COMPLETED)
                 for fut in done:
-                    idx = pending.pop(fut)
-                    population[idx].fitness.values = fut.result()
-                    n_harvested += 1
+                    if _harvest_one(fut):
+                        n_harvested += 1
 
-        # ── 3. split ready / pending ──
-        pending_idxs: set = set(pending.values())
-        ready = [ind for i, ind in enumerate(population) if i not in pending_idxs]
-        pending_count = len(pending_idxs)
+        new_pending_idxs: Set[int] = set(pending.values())
+        ready = [ind for i, ind in enumerate(population) if i not in new_pending_idxs]
+        pending_count = len(new_pending_idxs)
 
-        # ── 4. safety: if still zero ready, force-wait for at least one ──
         if not ready and pending:
             done, _ = cf.wait(list(pending), return_when=cf.FIRST_COMPLETED)
             for fut in done:
-                idx = pending.pop(fut)
-                population[idx].fitness.values = fut.result()
-                n_harvested += 1
-            pending_idxs = set(pending.values())
-            ready = [ind for i, ind in enumerate(population) if i not in pending_idxs]
-            pending_count = len(pending_idxs)
+                if _harvest_one(fut):
+                    n_harvested += 1
+            new_pending_idxs = set(pending.values())
+            ready = [ind for i, ind in enumerate(population) if i not in new_pending_idxs]
+            pending_count = len(new_pending_idxs)
 
-        # ── 5. sort ready & elites ──
         ready.sort(key=lambda ind: ind.fitness.values)
         elites = [toolbox.clone(ind) for ind in ready[:elitism_count]]
 
-        # ── 6. select from ready (fill remaining slots) ──
         n_immigrants = _immig_rate
         select_k = pop_size - elitism_count - pending_count - n_immigrants
         if select_k < 0:
             n_immigrants = max(0, pop_size - elitism_count - pending_count)
             select_k = 0
 
-        selected: list = []
+        selected: List[creator.Individual] = []
         if select_k > 0:
             selected = toolbox.select(ready, select_k)
         selected = [toolbox.clone(ind) for ind in selected]
 
-        # ── 6. mutate ──
+        n_crossed = 0
+        for i in range(0, len(selected) - 1, 2):
+            if random.random() < crossover_rate:
+                c1, c2 = toolbox.mate(selected[i], selected[i + 1])
+                selected[i] = creator.Individual(c1)
+                selected[i + 1] = creator.Individual(c2)
+                del selected[i].fitness.values
+                del selected[i + 1].fitness.values
+                n_crossed += 2
+
         n_mutated = 0
         for i, ind in enumerate(selected):
             if random.random() < mutation_rate:
@@ -156,18 +174,16 @@ def _evolve(
                 del selected[i].fitness.values
                 n_mutated += 1
 
-        # ── 7. immigrants ──
         immigrants = [toolbox.individual() for _ in range(n_immigrants)]
 
-        # ── 8. rebuild population ──
-        sorted_pending_idxs = sorted(pending_idxs)
+        sorted_pending_idxs = sorted(new_pending_idxs)
         pending_individuals = [population[i] for i in sorted_pending_idxs]
 
         old_to_new: Dict[int, int] = {}
         for new_i, old_i in enumerate(sorted_pending_idxs):
             old_to_new[old_i] = elitism_count + new_i
 
-        remapped: Dict[cf.Future, int] = {}
+        remapped: Dict[cf.Future[Tuple[float, int]], int] = {}
         for fut, old_idx in pending.items():
             remapped[fut] = old_to_new[old_idx]
         pending = remapped
@@ -177,32 +193,100 @@ def _evolve(
 
         hof.update(ready)
 
-        # ── 9. submit new evaluations ──
         offset = elitism_count + len(pending_individuals)
         for i, ind in enumerate(selected + immigrants):
             fut = executor.submit(_eval_one, tuple(ind))
             pending[fut] = offset + i
 
-        # ── 10. stats ──
         errs_list = [ind.fitness.values[0] for ind in ready]
         nodes_list = [ind.fitness.values[1] for ind in ready]
+
+        edges_list = []
+        for ind in ready:
+            g = decode(ind)
+            edges_list.append(len(g.edges))
+
         if errs_list:
             best_idx = min(range(len(errs_list)), key=lambda i: (errs_list[i], nodes_list[i]))
             best_err = errs_list[best_idx]
             best_n = nodes_list[best_idx]
+            best_ind = ready[best_idx]
             avg_err = sum(errs_list) / len(errs_list)
         else:
             best_err = float("inf")
             best_n = 0
+            best_ind = None
             avg_err = float("inf")
 
         elapsed = time.perf_counter() - t0
+
+        if history is not None:
+            min_n = min(nodes_list) if nodes_list else 0
+            max_n = max(nodes_list) if nodes_list else 0
+            max_e = max(edges_list) if edges_list else 0
+
+            best_graph_edges: Optional[List[List[str]]] = None
+            if best_ind is not None:
+                graph = decode(best_ind)
+                best_graph_edges = [list(e) for e in graph.edges]
+                history.record_best(
+                    gen=gen,
+                    edges=best_graph_edges,
+                    fitness=(float(best_err), int(best_n)),
+                    graph_nodes=len(graph.nodes),
+                    graph_edges=len(graph.edges),
+                )
+
+            history.record_gen(
+                gen=gen,
+                best_error=best_err,
+                best_nodes=best_n,
+                avg_error=avg_err,
+                min_nodes=min_n,
+                max_nodes=max_n,
+                max_edges=max_e,
+                n_crossed=n_crossed,
+                n_mutated=n_mutated,
+                n_selected=len(selected),
+                n_immigrants=n_immigrants,
+                n_ready=len(ready),
+                n_pending=pending_count,
+                n_harvested=n_harvested,
+                elapsed_sec=elapsed,
+                best_edges=best_graph_edges,
+            )
+
+        if best_err < best_ever_err - 1e-9:
+            best_ever_err = best_err
+            stagnation = 0
+            _immig_rate = max(1, int(pop_size * immigration_rate)) if immigration_rate > 0 else 0
+        else:
+            stagnation += 1
+
+        if 0 < stagnation <= _cfg.stagnation_restart and stagnation % _cfg.stagnation_interval == 0:
+            _immig_rate = max(1, int(pop_size * _cfg.stagnation_boost_ratio))
+
+        if stagnation >= _cfg.stagnation_restart:
+            ready_sorted = sorted(ready, key=lambda ind: ind.fitness.values)
+            n_keep = min(_cfg.restart_survivors, len(ready_sorted))
+            survivors = [toolbox.clone(ind) for ind in ready_sorted[:n_keep]]
+            new_randoms = [toolbox.individual() for _ in range(pop_size - n_keep)]
+            population[:] = survivors + [creator.Individual(c) for c in new_randoms]
+            pending.clear()
+            for i, ind in enumerate(population[n_keep:]):
+                fut = executor.submit(_eval_one, tuple(ind))
+                pending[fut] = n_keep + i
+            best_ever_err = float("inf")
+            stagnation = 0
+            _immig_rate = max(1, int(pop_size * immigration_rate)) if immigration_rate > 0 else 0
+            pbar.update(1)
+            continue
 
         pbar.set_postfix_str(
             f"best=({best_err:.0f}, {best_n:.0f}) "
             f"avg={avg_err:.6f} "
             f"n={min(nodes_list) if nodes_list else 0}~{max(nodes_list) if nodes_list else 0} "
-            f"mut={n_mutated}/{len(selected)} "
+            f"x={n_crossed} mut={n_mutated}/{len(selected)} "
             f"imm={n_immigrants} "
             f"R={len(ready)} P={pending_count} H={n_harvested} "
             f"t={elapsed:.1f}s"
@@ -213,49 +297,69 @@ def _evolve(
     return hof
 
 
-# ── Entry point ──
-
 def run(
-    target_pq: Tuple[int, int] = None,
-    pop_size: int = None,
-    generations: int = None,
-    mutation_rate: float = None,
-    tournament_size: int = None,
-    mutation_weights: Tuple[float, ...] = None,
-    elitism_count: int = None,
-    immigration_rate: float = None,
+    target_pq: Optional[Tuple[int, int]] = None,
+    pop_size: Optional[int] = None,
+    generations: Optional[int] = None,
+    mutation_rate: Optional[float] = None,
+    crossover_rate: Optional[float] = None,
+    tournament_size: Optional[int] = None,
+    mutation_weights: Optional[Tuple[float, ...]] = None,
+    elitism_count: Optional[int] = None,
+    immigration_rate: Optional[float] = None,
     eval_timeout: Optional[float] = None,
-    solver_workers: int = None,
-    solver_threads: int = None,
+    solver_workers: Optional[int] = None,
+    solver_threads: Optional[int] = None,
     max_denominator: int = 10000,
+    mode: Optional[str] = None,
     output_path: Optional[str] = None,
-) -> list[dict]:
+) -> List[Dict[str, object]]:
     target_pq = target_pq if target_pq is not None else _cfg.target_pq
     pop_size = pop_size or _cfg.pop_size
     generations = generations or _cfg.generations
     mutation_rate = mutation_rate if mutation_rate is not None else _cfg.mutation_rate
+    crossover_rate = crossover_rate if crossover_rate is not None else _cfg.crossover_rate
     tournament_size = tournament_size or _cfg.tournament_size
-    mutation_weights = mutation_weights or (0.225, 0.225, 0.225, 0.225, 0.1)
+    mutation_weights = mutation_weights or tuple(_cfg.mutation_weights)
     elitism_count = elitism_count if elitism_count is not None else _cfg.elitism_count
     immigration_rate = immigration_rate if immigration_rate is not None else _cfg.immigration_rate
     eval_timeout = eval_timeout if eval_timeout is not None else _cfg.eval_timeout
     n_workers = solver_workers if solver_workers is not None else _cfg.solver_workers
     threads = solver_threads if solver_threads is not None else _cfg.solver_threads
+    mode = mode if mode is not None else _cfg.mode
     output_path = output_path or _cfg.output_path
 
     print(f"{'='*60}")
-    print(f"  TopoFlow GA (async) |  Target = {target_pq[0]}/{target_pq[1]}")
-    print(f"  pop={pop_size}  gen={generations}  mut_rate={mutation_rate}")
-    print(f"  tournament_size={tournament_size}  elitism={elitism_count}  immigration={immigration_rate:.2f}")
-    print(f"  eval_timeout={eval_timeout if eval_timeout is not None else 'dynamic'}s  workers={n_workers}  threads={threads}")
-    print(f"  max_denominator={max_denominator}")
+    print(f"  TopoFlow GA |  Target = {target_pq[0]}/{target_pq[1]}")
+    print(f"  mode={mode}  pop={pop_size}  gen={generations}  mut_rate={mutation_rate}  x_rate={crossover_rate}")
+    print(f"  tournament={tournament_size}  elitism={elitism_count}  immigration={immigration_rate:.2f}")
+    print(f"  workers={n_workers}  threads={threads}")
     print(f"{'='*60}")
+
+    history = History()
+    history.target_pq = target_pq
+    history.set_params(
+        pop_size=pop_size,
+        generations=generations,
+        mutation_rate=mutation_rate,
+        crossover_rate=crossover_rate,
+        tournament_size=tournament_size,
+        mutation_weights=list(mutation_weights),
+        elitism_count=elitism_count,
+        immigration_rate=immigration_rate,
+        eval_timeout=eval_timeout,
+        solver_workers=n_workers,
+        solver_threads=threads,
+        max_denominator=max_denominator,
+        mode=mode,
+    )
 
     toolbox = base.Toolbox()
     toolbox.register("individual", _generate_random_individual)
     toolbox.register("population", tools.initRepeat, list, toolbox.individual)
     toolbox.register("select", tools.selTournament, tournsize=tournament_size)
-    toolbox.register("mutate", partial(_mutate_wrapper, weights=mutation_weights))
+    toolbox.register("mate", crossover_pmx)
+    toolbox.register("mutate", partial(_mutate_wrapper, weights=mutation_weights, max_tries=_cfg.mutation_max_tries))
 
     print(f"\nGenerating initial population ({pop_size} individuals)...")
     population = toolbox.population(n=pop_size)
@@ -265,8 +369,8 @@ def run(
 
     with cf.ProcessPoolExecutor(
         max_workers=n_workers,
-        initializer=_worker_init,
-        initargs=(target_pq, threads, max_denominator),
+        initializer=_worker_init,  # type: ignore[arg-type]
+        initargs=(target_pq, threads, max_denominator, mode),  # type: ignore[arg-type]
     ) as executor:
         fut_to_idx = {
             executor.submit(_eval_one, tuple(ind)): i
@@ -282,6 +386,28 @@ def run(
             idx = fut_to_idx[fut]
             population[idx].fitness.values = fut.result()
 
+        replace_idxs = [
+            i for i, ind in enumerate(population)
+            if ind.fitness.values[0] == float("inf") and random.random() >= _cfg.infeasible_throughput
+        ]
+        if replace_idxs:
+            for i in replace_idxs:
+                population[i] = toolbox.individual()
+            fut_to_idx = {
+                executor.submit(_eval_one, tuple(population[i])): i
+                for i in replace_idxs
+            }
+            for _ in tqdm(
+                cf.as_completed(fut_to_idx),
+                total=len(replace_idxs),
+                desc="  Re-eval",
+                unit="ind",
+                dynamic_ncols=True,
+            ):
+                pass
+            for fut, idx in fut_to_idx.items():
+                population[idx].fitness.values = fut.result()
+
         t_eval = time.perf_counter() - t_eval
 
         initial_fits = [ind.fitness.values[0] for ind in population]
@@ -293,8 +419,9 @@ def run(
 
         t_start = time.perf_counter()
         hof = _evolve(
-            population, toolbox, generations, mutation_rate,
+            population, toolbox, generations, mutation_rate, crossover_rate,
             threads, executor, elitism_count, immigration_rate, eval_timeout,
+            history=history,
         )
         elapsed = time.perf_counter() - t_start
 
@@ -305,7 +432,7 @@ def run(
     print(f"  Time:              {elapsed:.1f}s ({elapsed/60:.1f}min)")
 
     for rank, ind in enumerate(hof):
-        graph = tuple_to_graph(ind)
+        graph = decode(ind)
         err = ind.fitness.values[0]
         nodes = ind.fitness.values[1]
 
@@ -332,5 +459,8 @@ def run(
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
     print(f"\n  Saved to: {out_path}")
+
+    history.to_json(_cfg.history_path)
+    print(f"\n{history.summary()}")
 
     return results

@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Force Debug</title>
+<style>
+:root {
+  --bg: #1a1a2e;
+  --panel: #16213e;
+  --ink: #e0e0e0;
+  --muted: #8892b0;
+  --line: #2a2a4a;
+  --accent: #64ffda;
+  --red: #ff6b6b;
+  --blue: #4ecdc4;
+  --orange: #ffd93d;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { height: 100%; overflow: hidden; }
+
+body {
+  font-family: "Segoe UI", "Microsoft YaHei", monospace;
+  color: var(--ink);
+  background: var(--bg);
+}
+
+.layout {
+  height: 100vh;
+  display: grid;
+  grid-template-columns: 240px 1fr 260px;
+  gap: 8px;
+  padding: 8px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+h2 { font-size: 14px; margin-bottom: 10px; color: var(--accent); }
+h3 { font-size: 12px; margin: 10px 0 6px; color: var(--muted); }
+
+button {
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 8px 14px;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+}
+button:hover { background: rgba(100,255,218,0.1); }
+button.is-active { background: var(--accent); color: var(--bg); }
+
+.stat-row {
+  display: flex; justify-content: space-between;
+  padding: 4px 0; font-size: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.stat-key { color: var(--muted); }
+.stat-val { font-weight: 600; text-align: right; }
+
+svg {
+  width: 100%; height: 100%;
+  border-radius: 8px;
+  background: #0f0f23;
+  border: 1px solid var(--line);
+}
+
+.node circle { stroke: var(--bg); stroke-width: 2; }
+.node text { fill: white; font-size: 10px; font-weight: 600; text-anchor: middle; pointer-events: none; }
+
+.edge-line {
+  fill: none; stroke: #445;
+  stroke-width: 1.5;
+  marker-end: url(#arrow);
+}
+
+.force-arrow {
+  stroke: var(--accent);
+  stroke-width: 0.8;
+  marker-end: url(#arrow-force);
+  pointer-events: none;
+}
+
+.grid-overlay { stroke: rgba(255,255,255,0.03); stroke-width: 0.5; }
+
+#log-box {
+  flex: 1; overflow-y: auto;
+  font-size: 11px; font-family: monospace;
+  background: rgba(0,0,0,0.2);
+  border-radius: 6px;
+  padding: 8px;
+  max-height: 200px;
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+
+.dead { color: var(--red); }
+.alive { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside class="panel" style="gap:8px">
+    <h2>Force Debug</h2>
+    <div class="stat-row"><span class="stat-key">Nodes</span><span class="stat-val" id="stat-nodes">-</span></div>
+    <div class="stat-row"><span class="stat-key">Edges</span><span class="stat-val" id="stat-edges">-</span></div>
+    <div class="stat-row"><span class="stat-key">FPS</span><span class="stat-val" id="stat-fps">-</span></div>
+    <div class="stat-row"><span class="stat-key">Frame</span><span class="stat-val" id="stat-frame">-</span></div>
+    <div class="stat-row"><span class="stat-key">Max Speed</span><span class="stat-val" id="stat-maxv">-</span></div>
+    <div class="stat-row"><span class="stat-key">Total Energy</span><span class="stat-val" id="stat-energy">-</span></div>
+
+    <button id="btn-start" style="width:100%">Start</button>
+    <button id="btn-pause" style="width:100%;display:none">Pause</button>
+    <button id="btn-step" style="width:100%">Single Step</button>
+    <button id="btn-reset" style="width:100%">Reset Positions</button>
+
+    <label style="font-size:11px;color:var(--muted);margin-top:8px">
+      <input type="checkbox" id="chk-arrows" checked /> Show force arrows
+    </label>
+
+    <h3>File</h3>
+    <input type="file" id="file-input" accept=".txt" style="display:none" />
+    <button id="btn-load">Load graph.txt</button>
+    <div style="font-size:10px;color:var(--muted);margin-top:4px">
+      auto-loads: output/ga_output_1.txt
+    </div>
+
+    <h3>Params</h3>
+    <div style="display:grid;gap:4px;font-size:11px">
+      <div class="stat-row"><span class="stat-key">k1 repel</span><input id="inp-k1" type="number" value="10000" step="100" style="width:80px;text-align:right;background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:2px 4px;font-size:11px"></div>
+      <div class="stat-row"><span class="stat-key">k2 attract</span><input id="inp-k2" type="number" value="200" step="10" style="width:80px;text-align:right;background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:2px 4px;font-size:11px"></div>
+      <div class="stat-row"><span class="stat-key">damp</span><input id="inp-damp" type="number" value="0.88" step="0.01" style="width:80px;text-align:right;background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:2px 4px;font-size:11px"></div>
+      <div class="stat-row"><span class="stat-key">dt</span><input id="inp-dt" type="number" value="0.5" step="0.01" style="width:80px;text-align:right;background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:2px 4px;font-size:11px"></div>
+      <div class="stat-row"><span class="stat-key">ideal</span><input id="inp-ideal" type="number" value="400" step="10" style="width:80px;text-align:right;background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:2px 4px;font-size:11px"></div>
+    </div>
+    <button id="btn-apply-params" style="width:100%;margin-top:6px">Apply Params</button>
+  </aside>
+
+  <main class="panel" style="padding:4px;overflow:hidden">
+    <svg id="graph-svg" viewBox="0 0 2700 1680"></svg>
+  </main>
+
+  <aside class="panel">
+    <h2>Log</h2>
+    <div id="log-box"></div>
+  </aside>
+</div>
+
+<script>
+(function() {
+  var GRAPH_BOUNDS = { width: 2700, height: 1680, padding: 50 };
+  var NODE_R = 22;
+  var MAX_ITER = 200;
+
+  var state = {
+    nodes: [],
+    edges: [],
+    running: false,
+    paused: false,
+    frameId: null,
+    frame: 0,
+    lastFrameTime: 0,
+    fps: 0,
+    fpsFrames: 0,
+    fpsTimer: 0,
+    showArrows: true,
+    k1: 10000, k2: 200, damp: 0.88, dt: 0.5, ideal: 400,
+  };
+
+  var els = {};
+
+  function initDom() {
+    els.svg = document.getElementById("graph-svg");
+    els.btnStart = document.getElementById("btn-start");
+    els.btnPause = document.getElementById("btn-pause");
+    els.btnStep = document.getElementById("btn-step");
+    els.btnReset = document.getElementById("btn-reset");
+    els.btnLoad = document.getElementById("btn-load");
+    els.fileInput = document.getElementById("file-input");
+    els.chkArrows = document.getElementById("chk-arrows");
+    els.logBox = document.getElementById("log-box");
+    els.btnApplyParams = document.getElementById("btn-apply-params");
+
+    els.inpK1 = document.getElementById("inp-k1");
+    els.inpK2 = document.getElementById("inp-k2");
+    els.inpDamp = document.getElementById("inp-damp");
+    els.inpDt = document.getElementById("inp-dt");
+    els.inpIdeal = document.getElementById("inp-ideal");
+  }
+
+  function log(msg, cls) {
+    var line = "[" + new Date().toLocaleTimeString() + "] " + msg;
+    els.logBox.innerHTML += '<span class="' + (cls || "") + '">' + line + '</span>\n';
+    els.logBox.scrollTop = els.logBox.scrollHeight;
+  }
+
+  function parseGraph(text) {
+    var nodes = {};
+    var edges = [];
+    text.split("\n").forEach(function(line) {
+      var m = line.match(/^\s*(\S+)\s*->\s*(\S+)/);
+      if (!m) return;
+      var from = m[1], to = m[2];
+      nodes[from] = true; nodes[to] = true;
+      edges.push([from, to]);
+    });
+    var nodeIds = Object.keys(nodes);
+    if (nodeIds.length === 0) throw new Error("No nodes found");
+    return { nodeIds: nodeIds, edges: edges };
+  }
+
+  function initPositions(nodeIds) {
+    var pad = GRAPH_BOUNDS.padding;
+    var w = GRAPH_BOUNDS.width - pad * 2;
+    var h = GRAPH_BOUNDS.height - pad * 2;
+
+    var layers = {};
+    var depth = {};
+    var adj = {};
+    var inDeg = {};
+
+    nodeIds.forEach(function(n) { adj[n] = []; inDeg[n] = 0; });
+    state.edges.forEach(function(e) { adj[e[0]].push(e[1]); inDeg[e[1]]++; });
+
+    function dfs(n, d, path) {
+      if (path[n]) return;
+      path[n] = true;
+      depth[n] = Math.max(depth[n] || 0, d);
+      adj[n].forEach(function(t) { dfs(t, d + 1, path); });
+      path[n] = false;
+    }
+
+    nodeIds.forEach(function(n) { if (inDeg[n] === 0) dfs(n, 0, {}); });
+    nodeIds.forEach(function(n) { if (depth[n] === undefined) depth[n] = 0; });
+
+    nodeIds.forEach(function(n) {
+      var d = depth[n];
+      if (!layers[d]) layers[d] = [];
+      layers[d].push(n);
+    });
+
+    var layerKeys = Object.keys(layers).map(Number).sort(function(a,b) { return a-b; });
+    var maxLayer = 0;
+    layerKeys.forEach(function(k) { maxLayer = Math.max(maxLayer, layers[k].length); });
+
+    var sx = w / Math.max(layerKeys.length + 1, 2);
+    var sy = h / Math.max(maxLayer + 1, 2);
+
+    var nodes = [];
+    nodeIds.forEach(function(n) {
+      var d = depth[n];
+      var col = layerKeys.indexOf(d);
+      var row = layers[d].indexOf(n);
+      nodes.push({
+        id: n,
+        x: pad + sx * (col + 1),
+        y: pad + sy * (row + 1),
+        vx: 0, vy: 0
+      });
+    });
+    return nodes;
+  }
+
+  function resetState() {
+    state.nodes.forEach(function(n) { n.vx = 0; n.vy = 0; });
+  }
+
+  function step() {
+    var nodes = state.nodes;
+    var edges = state.edges;
+    var k1 = state.k1, k2 = state.k2, damp = state.damp, dt = state.dt, ideal = state.ideal;
+
+    var nodeMap = {};
+    nodes.forEach(function(n) { nodeMap[n.id] = n; });
+
+    var accel = {};
+    nodes.forEach(function(n) { accel[n.id] = { ax: 0, ay: 0 }; });
+
+    edges.forEach(function(e) {
+      var u = nodeMap[e[0]], v = nodeMap[e[1]];
+      if (!u || !v) return;
+      var dx = v.x - u.x, dy = v.y - u.y;
+      var dist = Math.hypot(dx, dy) || 1e-6;
+      var f = k2 * (dist - ideal) / (dist * ideal);
+      accel[e[0]].ax += f * dx;
+      accel[e[0]].ay += f * dy;
+      accel[e[1]].ax -= f * dx;
+      accel[e[1]].ay -= f * dy;
+    });
+
+    for (var a = 0; a < nodes.length; a++) {
+      for (var b = a + 1; b < nodes.length; b++) {
+        var na = nodes[a], nb = nodes[b];
+        var dx = nb.x - na.x, dy = nb.y - na.y;
+        var dist = Math.max(Math.hypot(dx, dy), 5);
+        var f = k1 / (dist * dist * dist);
+        accel[na.id].ax -= f * dx;
+        accel[na.id].ay -= f * dy;
+        accel[nb.id].ax += f * dx;
+        accel[nb.id].ay += f * dy;
+      }
+    }
+
+    var maxSpeed = 0, totalEnergy = 0;
+    var pad = GRAPH_BOUNDS.padding;
+    var bw = GRAPH_BOUNDS.width, bh = GRAPH_BOUNDS.height;
+    var cap = 500;
+
+    nodes.forEach(function(n) {
+      var a = accel[n.id];
+      var am = Math.hypot(a.ax, a.ay);
+      if (am > cap) { a.ax *= cap / am; a.ay *= cap / am; }
+      n.vx = damp * (n.vx + a.ax * dt);
+      n.vy = damp * (n.vy + a.ay * dt);
+      n.x = Math.max(pad, Math.min(bw - pad, n.x + n.vx * dt));
+      n.y = Math.max(pad, Math.min(bh - pad, n.y + n.vy * dt));
+      var speed = Math.hypot(n.vx, n.vy);
+      if (speed > maxSpeed) maxSpeed = speed;
+      totalEnergy += speed * speed;
+    });
+
+    return { maxSpeed: maxSpeed, totalEnergy: totalEnergy, accel: accel };
+  }
+
+  function render() {
+    var nodes = state.nodes;
+    var edges = state.edges;
+    var nodeMap = {};
+    nodes.forEach(function(n) { nodeMap[n.id] = n; });
+
+    var svg = els.svg;
+
+    var gridHtml = "";
+    for (var gx = GRAPH_BOUNDS.padding; gx < GRAPH_BOUNDS.width; gx += 100) {
+      gridHtml += '<line class="grid-overlay" x1="'+gx+'" y1="0" x2="'+gx+'" y2="'+GRAPH_BOUNDS.height+'"></line>';
+    }
+    for (var gy = GRAPH_BOUNDS.padding; gy < GRAPH_BOUNDS.height; gy += 100) {
+      gridHtml += '<line class="grid-overlay" x1="0" y1="'+gy+'" x2="'+GRAPH_BOUNDS.width+'" y2="'+gy+'"></line>';
+    }
+
+    var edgeHtml = "";
+    edges.forEach(function(e) {
+      var u = nodeMap[e[0]], v = nodeMap[e[1]];
+      if (!u || !v) return;
+      var dx = v.x - u.x, dy = v.y - u.y;
+      var len = Math.hypot(dx, dy) || 1;
+      var ux = dx / len, uy = dy / len;
+      var x1 = u.x + ux * NODE_R, y1 = u.y + uy * NODE_R;
+      var x2 = v.x - ux * (NODE_R + 8), y2 = v.y - uy * (NODE_R + 8);
+      edgeHtml += '<line class="edge-line" x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'"></line>';
+    });
+
+    var nodeHtml = "";
+    nodes.forEach(function(n) {
+      var inD = 0, outD = 0;
+      edges.forEach(function(e) { if (e[0]===n.id) outD++; if (e[1]===n.id) inD++; });
+      var color;
+      if (inD === 0 && outD === 0) color = "#777";
+      else if (inD === 0) color = "#4ecdc4";
+      else if (outD === 0) color = "#ff6b6b";
+      else if (inD <= outD) color = "#64ffda";
+      else color = "#ffd93d";
+
+      nodeHtml +=
+        '<g class="node" transform="translate('+n.x+','+n.y+')">' +
+        '<circle r="'+NODE_R+'" fill="'+color+'"></circle>' +
+        '<text dy="4">'+n.id+'</text>' +
+        '</g>';
+    });
+
+    svg.innerHTML =
+      '<defs>' +
+        '<marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">' +
+          '<path d="M0,0 L0,6 L8,3 z" fill="#445"></path>' +
+        '</marker>' +
+        '<marker id="arrow-force" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto" markerUnits="strokeWidth">' +
+          '<path d="M0,0 L0,6 L6,3 z" fill="#64ffda"></path>' +
+        '</marker>' +
+      '</defs>' +
+      gridHtml +
+      '<g id="edge-layer">'+edgeHtml+'</g>' +
+      '<g id="node-layer">'+nodeHtml+'</g>';
+  }
+
+  function renderForceArrows(accel) {
+    if (!state.showArrows) return;
+    var nodes = state.nodes;
+    var svg = els.svg;
+    var html = "";
+    var scale = 2.5;
+    nodes.forEach(function(n) {
+      var a = accel[n.id];
+      var ax = a.ax, ay = a.ay;
+      var mag = Math.hypot(ax, ay);
+      if (mag < 0.001) return;
+      var ux = ax / mag, uy = ay / mag;
+      var x1 = n.x, y1 = n.y;
+      var x2 = x1 + ux * mag * scale, y2 = y1 + uy * mag * scale;
+      html += '<line class="force-arrow" x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'"></line>';
+    });
+    var layer = svg.querySelector("#force-layer");
+    if (!layer) {
+      layer = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      layer.setAttribute("id", "force-layer");
+      svg.appendChild(layer);
+    }
+    layer.innerHTML = html;
+  }
+
+  function tick(timestamp) {
+    if (!state.running) return;
+
+    if (!state.lastFrameTime) state.lastFrameTime = timestamp;
+    var elapsed = timestamp - state.lastFrameTime;
+    state.lastFrameTime = timestamp;
+
+    state.fpsFrames++;
+    state.fpsTimer += elapsed;
+    if (state.fpsTimer >= 1000) {
+      state.fps = Math.round(state.fpsFrames * 1000 / state.fpsTimer);
+      state.fpsFrames = 0;
+      state.fpsTimer = 0;
+    }
+
+    var result = step();
+    state.frame++;
+
+    render();
+    renderForceArrows(result.accel);
+
+    document.getElementById("stat-fps").textContent = state.fps;
+    document.getElementById("stat-frame").textContent = state.frame;
+    document.getElementById("stat-maxv").textContent = result.maxSpeed.toFixed(4);
+    document.getElementById("stat-energy").textContent = result.totalEnergy.toExponential(2);
+
+    if (state.running) {
+      state.frameId = requestAnimationFrame(tick);
+    }
+  }
+
+  function start() {
+    if (state.running) return;
+    state.running = true;
+    state.lastFrameTime = 0;
+    state.fpsFrames = 0;
+    state.fpsTimer = 0;
+    els.btnStart.style.display = "none";
+    els.btnPause.style.display = "";
+    els.btnPause.textContent = "Pause";
+    els.btnPause.classList.remove("is-active");
+    log("Started @" + state.fps + " fps", "alive");
+    state.frameId = requestAnimationFrame(tick);
+  }
+
+  function pause() {
+    state.running = false;
+    if (state.frameId) { cancelAnimationFrame(state.frameId); state.frameId = null; }
+    els.btnStart.style.display = "";
+    els.btnPause.style.display = "none";
+    log("Paused @ frame " + state.frame, "dead");
+  }
+
+  function singleStep() {
+    if (state.running) return;
+    var result = step();
+    state.frame++;
+    render();
+    renderForceArrows(result.accel);
+    document.getElementById("stat-frame").textContent = state.frame;
+    document.getElementById("stat-maxv").textContent = result.maxSpeed.toFixed(4);
+    document.getElementById("stat-energy").textContent = result.totalEnergy.toExponential(2);
+    log("Step " + state.frame + " maxSpeed=" + result.maxSpeed.toFixed(4), "");
+  }
+
+  function resetPositions() {
+    var wasRunning = state.running;
+    if (wasRunning) pause();
+    var nodeIds = state.nodes.map(function(n) { return n.id; });
+    state.nodes = initPositions(nodeIds);
+    state.frame = 0;
+    render();
+    document.getElementById("stat-frame").textContent = "0";
+    document.getElementById("stat-maxv").textContent = "0";
+    document.getElementById("stat-energy").textContent = "0";
+    log("Positions reset", "");
+    if (wasRunning) start();
+  }
+
+  function loadGraph(text) {
+    try {
+      var parsed = parseGraph(text);
+      state.edges = parsed.edges;
+      state.nodes = initPositions(parsed.nodeIds);
+      state.frame = 0;
+      document.getElementById("stat-nodes").textContent = parsed.nodeIds.length;
+      document.getElementById("stat-edges").textContent = parsed.edges.length;
+      render();
+      log("Loaded: " + parsed.nodeIds.length + " nodes, " + parsed.edges.length + " edges", "alive");
+    } catch (e) {
+      log("Parse error: " + e.message, "dead");
+    }
+  }
+
+  function applyParams() {
+    state.k1 = parseFloat(els.inpK1.value) || 10000;
+    state.k2 = parseFloat(els.inpK2.value) || 200;
+    state.damp = parseFloat(els.inpDamp.value) || 0.88;
+    state.dt = parseFloat(els.inpDt.value) || 0.5;
+    state.ideal = parseFloat(els.inpIdeal.value) || 400;
+    log("Params: k1="+state.k1+" k2="+state.k2+" damp="+state.damp+" dt="+state.dt+" ideal="+state.ideal, "");
+  }
+
+  function setup() {
+    initDom();
+
+    els.btnStart.addEventListener("click", start);
+    els.btnPause.addEventListener("click", pause);
+    els.btnStep.addEventListener("click", singleStep);
+    els.btnReset.addEventListener("click", resetPositions);
+
+    els.btnLoad.addEventListener("click", function() { els.fileInput.click(); });
+    els.fileInput.addEventListener("change", function(e) {
+      var file = e.target.files[0];
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function(ev) { loadGraph(ev.target.result); };
+      reader.readAsText(file);
+      els.fileInput.value = "";
+    });
+
+    els.chkArrows.addEventListener("change", function() {
+      state.showArrows = els.chkArrows.checked;
+      if (!state.running) render();
+    });
+
+    els.btnApplyParams.addEventListener("click", applyParams);
+
+    els.inpK1.value = state.k1;
+    els.inpK2.value = state.k2;
+    els.inpDamp.value = state.damp;
+    els.inpDt.value = state.dt;
+    els.inpIdeal.value = state.ideal;
+
+    fetch("../output/ga_output_1.txt")
+      .then(function(r) { return r.text(); })
+      .then(function(t) { loadGraph(t); })
+      .catch(function() { log("Auto-load failed: output/ga_output_1.txt not found", "dead"); });
+  }
+
+  setup();
+})();
+</script>
+</body>
+</html>

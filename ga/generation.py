@@ -1,8 +1,10 @@
 import random
 from typing import Tuple, Optional, List, Set, Dict
 
-from graph import Graph, Node
+from graph import Graph, Node, Edge
 from config import DEFAULT_CONFIG as _cfg
+
+_module_counter = 0
 
 
 def _reachable_from(start: Node, out_edges: Dict[Node, List[Tuple[Node, Node]]]) -> Set[Node]:
@@ -235,3 +237,52 @@ def generate_subgraph(
         entry,
         exit_node,
     )
+
+
+def generate_replacement_module(
+    n_internal: int,
+) -> Optional[Tuple[Graph, Node, Node]]:
+    """生成完整图 → 切掉 In/Out → 返回 (subgraph, entry, exit).
+
+    entry 节点切掉 In 后欠 1 条入边，exit 节点切掉 Out 后欠 1 条出边。
+    插入父图时补上 u→entry 和 exit→v，度数完美还原。
+    返回 None 表示生成退化图（仅 In→Out 无内部结构）。
+    """
+    global _module_counter
+    _module_counter += 1
+    tag = f"__{_module_counter}"
+
+    full = generate_strict_graph(n_internal)
+
+    if len(full.edges) == 1:
+        return None
+
+    source_out = full.out_edges.get("In", [])
+    sink_in = full.in_edges.get("Out", [])
+    if not source_out or not sink_in:
+        return None
+
+    _, entry_old = source_out[0]
+    exit_old, _ = sink_in[0]
+
+    rename: Dict[Node, Node] = {}
+    for node in full.nodes:
+        if node not in ("In", "Out"):
+            rename[node] = node + tag
+
+    edges: List[Edge] = []
+    for u, v in full.edges:
+        if u == "In" or u == "Out" or v == "In" or v == "Out":
+            continue
+        edges.append((rename.get(u, u), rename.get(v, v)))
+
+    nodes_set: Set[Node] = set()
+    for u, v in edges:
+        nodes_set.add(u)
+        nodes_set.add(v)
+
+    if not nodes_set:
+        return None
+
+    subgraph = Graph(nodes_set, edges, _validate=False)
+    return subgraph, rename.get(entry_old, entry_old), rename.get(exit_old, exit_old)

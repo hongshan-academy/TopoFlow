@@ -12,8 +12,22 @@ dependencies = [
     "highspy>=1.15.1",
     "deap>=1.4.2",
     "fraction>=2.2.0",
+    "mypy>=2.3.0",
+    "matplotlib>=3.11.1",
 ]
+
+[tool.mypy]
+exclude = ["\\.venv/"]
 
 [[tool.uv.index]]
 url = "https://mirrors.aliyun.com/pypi/simple"
 default = true
+[[tool.mypy.overrides]]
+module = ["pulp", "pulp.*"]
+ignore_missing_imports = true
+[[tool.mypy.overrides]]
+module = ["deap", "deap.*"]
+ignore_missing_imports = true
+[[tool.mypy.overrides]]
+module = ["matplotlib", "matplotlib.*"]
+ignore_missing_imports = true

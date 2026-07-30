@@ -8,26 +8,27 @@
 # 安装依赖
 uv sync
 
-# 搜索最优拓扑
+# 搜索最优拓扑（结果输出到 output/）
 uv run search.py
 
-# 启动 Web 可视化
+# Web 可视化：手动编辑拓扑，实时求解/仿真
 uv run uvicorn server:app --port 8080 --host 127.0.0.1
+
+# 离线查看最优个体轨迹
+./tools/ga_viewer.html
+
+# 绘制搜索过程统计数据
+uv run tools/plot.py
 ```
 
+## 参数
 
-## 关键参数
+编辑 `config.py` 中的 `DEFAULT_CONFIG`：
 
-```python
-# config.py
-pop_size = 100          # 种群大小
-generations = 2000      # 代数
-mutation_rate = 1.0     # 变异概率
-eval_timeout = 10.0     # 每代求值超时（秒），慢个体跨代保留
-tournament_size = 2     # 锦标赛规模
-elitism_count = 2       # 精英保留数
-immigration_rate = 0.05 # 每代注入新个体比例
-solver_workers = 16     # 并行求解进程数
-```
-
-突变权重：边删 0.225 / 点删 0.225 / 边增 0.225 / 点增 0.225 / 子图替换 0.1。
+| 用途 | 字段 |
+|---|---|
+| 目标吞吐率 `p/q` | `target_pq: Tuple[int, int] = (p, q)` |
+| 种群与代数 | `pop_size: int` / `generations: int` |
+| 求解器模式 | `mode: Literal['MILP', 'simulation', 'mixed']` |
+| 并行进程数 | `solver_workers: int` |
+| 结果输出路径 | `output_path: str` |

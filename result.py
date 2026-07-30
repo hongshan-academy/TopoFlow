@@ -1,4 +1,5 @@
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
+from typing import Dict, List
 
 import pulp
 
@@ -14,7 +15,12 @@ class EdgeResult:
 @dataclass
 class SolverResult:
     status: int
-    edges: list[EdgeResult] = field(default_factory=list)
+    edges: List[EdgeResult] = field(default_factory=list)
+
+@dataclass
+class SimulatorResult:
+    edges: List[EdgeResult]
+    converged: bool = True
 
 def format_result(result: SolverResult) -> str:
     string = f'FESSIBLE: {pulp.LpStatus[result.status]}\n\n'
@@ -33,7 +39,7 @@ def format_result(result: SolverResult) -> str:
 def visualize_result(result: SolverResult) -> str:
     lines = ["digraph G {"]
 
-    counter = {}
+    counter: Dict[str, List[int]] = {}
     for edge in result.edges:
         counter.setdefault(edge.source, [0, 0])
         counter.setdefault(edge.target, [0, 0])
