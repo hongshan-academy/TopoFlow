@@ -233,17 +233,17 @@ def encode(graph: Graph) -> Tuple[int, ...]:
     for i, (node, _) in enumerate(in_ports):
         available_in[node].append(i)
 
-    renamed_edges: Dict[Node, Set[Node]] = defaultdict(set)
+    renamed_edges: Dict[Node, List[Node]] = defaultdict(list)
     for u, v in graph.edges:
         ru = name_map[u]
         rv = name_map[v]
-        renamed_edges[ru].add(rv)
+        renamed_edges[ru].append(rv)
 
     n = len(out_ports)
     perm = [-1] * n
 
     for i, (out_node, _) in enumerate(out_ports):
-        targets = renamed_edges.get(out_node, set())
+        targets = renamed_edges.get(out_node, [])
         matched = False
         for target in targets:
             if target != out_node and target in available_in and available_in[target]:

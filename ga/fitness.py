@@ -43,8 +43,9 @@ def evaluate_cached(
     v = _extract_source_flow(graph, result)
     frac = Fraction(v).limit_denominator(max_denominator)
     p, q = target_pq
-    error = abs(p * frac.denominator - q * frac.numerator)
-    return (float(error), len(graph.edges))
+    target = Fraction(p, q)
+    error = float(abs(target - frac))
+    return (error, len(graph.nodes))
 
 
 def _mp_eval_worker(args: Tuple[Tuple[int, ...], Tuple[int, int], int, int, Literal['MILP', 'simulation', 'mixed']]) -> Tuple[float, int]:

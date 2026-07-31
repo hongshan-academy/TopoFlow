@@ -148,8 +148,8 @@ class History:
             f"History Summary",
             f"  Generations:       {len(self.generations)}",
             f"  Best chain steps:  {len(self.best_chain)}",
-            f"  Initial best:      err={first.best_error:.0f} nodes={first.best_nodes}",
-            f"  Final best:        err={last.best_error:.0f} nodes={last.best_nodes}",
+            f"  Initial best:      err={first.best_error:.6f} nodes={first.best_nodes}",
+            f"  Final best:        err={last.best_error:.6f} nodes={last.best_nodes}",
             f"  Total elapsed:     {self.elapsed_sec:.1f}s",
         ]
         return "\n".join(lines)

@@ -14,6 +14,7 @@ dependencies = [
     "fraction>=2.2.0",
     "mypy>=2.3.0",
     "matplotlib>=3.11.1",
+    "scikit-learn>=1.5.0",
 ]
 
 [tool.mypy]
@@ -30,4 +31,7 @@ module = ["deap", "deap.*"]
 ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = ["matplotlib", "matplotlib.*"]
+ignore_missing_imports = true
+[[tool.mypy.overrides]]
+module = ["sklearn", "sklearn.*"]
 ignore_missing_imports = true

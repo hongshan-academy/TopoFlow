@@ -1,8 +1,14 @@
 import concurrent.futures as cf
 import random
 import time
+
+import numpy as np
 from functools import partial
-from typing import Dict, List, Literal, Optional, Set, Tuple
+from typing import Dict, List, Literal, Optional, Set, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from rf_surrogate.model import SurrogateRF
+    from rf_surrogate.archive import SurrogateArchive
 
 from deap import base, creator, tools
 from tqdm import tqdm
@@ -78,6 +84,12 @@ def _evolve(
     immigration_rate: float = 0.0,
     eval_timeout: Optional[float] = None,
     history: Optional[History] = None,
+    surrogate: Optional["SurrogateRF"] = None,
+    archive: Optional["SurrogateArchive"] = None,
+    surrogate_top_fraction: float = 0.25,
+    surrogate_random_eval_fraction: float = 0.05,
+    surrogate_retrain_interval: int = 5,
+    surrogate_warmup_samples: int = 80,
 ) -> tools.HallOfFame:
     hof = tools.HallOfFame(5)
     pop_size = len(population)
@@ -92,9 +104,13 @@ def _evolve(
     pbar = tqdm(total=ngen, desc="Evolving", unit="gen", dynamic_ncols=True)
 
     for gen in range(ngen):
+        if gen % surrogate_retrain_interval == 0 and surrogate is not None and archive is not None and archive.size() >= surrogate_warmup_samples:
+            X, y = archive.get_data()
+            surrogate.fit(X, y)
+
         t0 = time.perf_counter()
 
-        def _harvest_one(fut: cf.Future[Tuple[float, int]]) -> bool:
+        def _harvest_one(fut: cf.Future[Tuple[float, int]]) -> Optional[int]:
             idx = pending.pop(fut)
             fitness = fut.result()
             if fitness[0] == float("inf") and random.random() >= _cfg.infeasible_throughput:
@@ -102,13 +118,42 @@ def _evolve(
                 population[idx] = new_ind
                 new_fut = executor.submit(_eval_one, tuple(new_ind))
                 pending[new_fut] = idx
-                return False
+                return None
             population[idx].fitness.values = fitness
-            return True
+            return idx
+
+        def _surrogate_filter(individuals, top_frac, rand_frac):
+            from rf_surrogate.features import extract_features
+            if not surrogate.is_ready():
+                return set(range(len(individuals)))
+            n = len(individuals)
+            if n == 0:
+                return set()
+            features_list = [extract_features(tuple(ind)) for ind in individuals]
+            features = np.array(features_list, dtype=np.float64)
+            predictions = surrogate.predict(features)
+            sorted_idx = np.argsort(predictions)
+            n_top = max(1, int(n * top_frac))
+            eval_set = set(sorted_idx[:n_top].tolist())
+            if rand_frac > 0:
+                remaining = [i for i in range(n) if i not in eval_set]
+                n_rand = min(int(n * rand_frac), len(remaining))
+                if n_rand > 0:
+                    chosen = np.random.choice(remaining, n_rand, replace=False).tolist()
+                    eval_set.update(chosen)
+            for i, ind in enumerate(individuals):
+                g = decode(tuple(ind))
+                pred_err = max(0.0, float(predictions[i]))
+                ind.fitness.values = (pred_err, len(g.edges))
+            return eval_set
 
         n_harvested = 0
         for fut in [f for f in pending if f.done()]:
-            if _harvest_one(fut):
+            idx = _harvest_one(fut)
+            if idx is not None:
+                fit = population[idx].fitness.values[0]
+                if archive is not None and fit != float("inf"):
+                    archive.add(tuple(population[idx]), fit)
                 n_harvested += 1
 
         if pending:
@@ -127,7 +172,11 @@ def _evolve(
                 else:
                     done, _ = cf.wait(list(pending), return_when=cf.FIRST_COMPLETED)
                 for fut in done:
-                    if _harvest_one(fut):
+                    idx = _harvest_one(fut)
+                    if idx is not None:
+                        fit = population[idx].fitness.values[0]
+                        if archive is not None and fit != float("inf"):
+                            archive.add(tuple(population[idx]), fit)
                         n_harvested += 1
 
         new_pending_idxs: Set[int] = set(pending.values())
@@ -137,7 +186,11 @@ def _evolve(
         if not ready and pending:
             done, _ = cf.wait(list(pending), return_when=cf.FIRST_COMPLETED)
             for fut in done:
-                if _harvest_one(fut):
+                idx = _harvest_one(fut)
+                if idx is not None:
+                    fit = population[idx].fitness.values[0]
+                    if archive is not None and fit != float("inf"):
+                        archive.add(tuple(population[idx]), fit)
                     n_harvested += 1
             new_pending_idxs = set(pending.values())
             ready = [ind for i, ind in enumerate(population) if i not in new_pending_idxs]
@@ -193,10 +246,17 @@ def _evolve(
 
         hof.update(ready)
 
+        new_individuals = selected + immigrants
+
+        eval_set = set(range(len(new_individuals)))
+        if surrogate is not None and surrogate.is_ready():
+            eval_set = _surrogate_filter(new_individuals, surrogate_top_fraction, surrogate_random_eval_fraction)
+
         offset = elitism_count + len(pending_individuals)
-        for i, ind in enumerate(selected + immigrants):
-            fut = executor.submit(_eval_one, tuple(ind))
-            pending[fut] = offset + i
+        for i, ind in enumerate(new_individuals):
+            if i in eval_set:
+                fut = executor.submit(_eval_one, tuple(ind))
+                pending[fut] = offset + i
 
         errs_list = [ind.fitness.values[0] for ind in ready]
         nodes_list = [ind.fitness.values[1] for ind in ready]
@@ -271,11 +331,16 @@ def _evolve(
             n_keep = min(_cfg.restart_survivors, len(ready_sorted))
             survivors = [toolbox.clone(ind) for ind in ready_sorted[:n_keep]]
             new_randoms = [toolbox.individual() for _ in range(pop_size - n_keep)]
-            population[:] = survivors + [creator.Individual(c) for c in new_randoms]
+            new_indiv_list = [creator.Individual(c) for c in new_randoms]
+            eval_set = set(range(len(new_indiv_list)))
+            if surrogate is not None and surrogate.is_ready():
+                eval_set = _surrogate_filter(new_indiv_list, surrogate_top_fraction, surrogate_random_eval_fraction)
+            population[:] = survivors + new_indiv_list
             pending.clear()
-            for i, ind in enumerate(population[n_keep:]):
-                fut = executor.submit(_eval_one, tuple(ind))
-                pending[fut] = n_keep + i
+            for i, ind in enumerate(new_indiv_list):
+                if i in eval_set:
+                    fut = executor.submit(_eval_one, tuple(ind))
+                    pending[fut] = n_keep + i
             best_ever_err = float("inf")
             stagnation = 0
             _immig_rate = max(1, int(pop_size * immigration_rate)) if immigration_rate > 0 else 0
@@ -283,7 +348,7 @@ def _evolve(
             continue
 
         pbar.set_postfix_str(
-            f"best=({best_err:.0f}, {best_n:.0f}) "
+            f"best=({best_err:.6f}, {best_n:.0f}) "
             f"avg={avg_err:.6f} "
             f"n={min(nodes_list) if nodes_list else 0}~{max(nodes_list) if nodes_list else 0} "
             f"x={n_crossed} mut={n_mutated}/{len(selected)} "
@@ -313,6 +378,13 @@ def run(
     max_denominator: int = 10000,
     mode: Optional[str] = None,
     output_path: Optional[str] = None,
+    surrogate_enabled: Optional[bool] = None,
+    surrogate_top_fraction: Optional[float] = None,
+    surrogate_random_eval_fraction: Optional[float] = None,
+    surrogate_warmup_samples: Optional[int] = None,
+    surrogate_retrain_interval: Optional[int] = None,
+    surrogate_n_estimators: Optional[int] = None,
+    surrogate_max_depth: Optional[int] = None,
 ) -> List[Dict[str, object]]:
     target_pq = target_pq if target_pq is not None else _cfg.target_pq
     pop_size = pop_size or _cfg.pop_size
@@ -328,6 +400,13 @@ def run(
     threads = solver_threads if solver_threads is not None else _cfg.solver_threads
     mode = mode if mode is not None else _cfg.mode
     output_path = output_path or _cfg.output_path
+    surrogate_enabled = surrogate_enabled if surrogate_enabled is not None else _cfg.surrogate_enabled
+    surrogate_top_fraction = surrogate_top_fraction if surrogate_top_fraction is not None else _cfg.surrogate_top_fraction
+    surrogate_random_eval_fraction = surrogate_random_eval_fraction if surrogate_random_eval_fraction is not None else _cfg.surrogate_random_eval_fraction
+    surrogate_warmup_samples = surrogate_warmup_samples if surrogate_warmup_samples is not None else _cfg.surrogate_warmup_samples
+    surrogate_retrain_interval = surrogate_retrain_interval if surrogate_retrain_interval is not None else _cfg.surrogate_retrain_interval
+    surrogate_n_estimators = surrogate_n_estimators if surrogate_n_estimators is not None else _cfg.surrogate_n_estimators
+    surrogate_max_depth = surrogate_max_depth if surrogate_max_depth is not None else _cfg.surrogate_max_depth
 
     print(f"{'='*60}")
     print(f"  TopoFlow GA |  Target = {target_pq[0]}/{target_pq[1]}")
@@ -417,11 +496,35 @@ def run(
             f"worst={max(initial_fits):.6f}\n"
         )
 
+        archive = None
+        surrogate = None
+        if surrogate_enabled:
+            from rf_surrogate.archive import SurrogateArchive
+            from rf_surrogate.model import SurrogateRF
+            archive = SurrogateArchive()
+            for ind in population:
+                fit = ind.fitness.values[0]
+                if fit != float("inf"):
+                    archive.add(tuple(ind), fit)
+            if archive.size() >= surrogate_warmup_samples:
+                surrogate = SurrogateRF(
+                    n_estimators=surrogate_n_estimators,
+                    max_depth=surrogate_max_depth,
+                )
+                X, y = archive.get_data()
+                surrogate.fit(X, y)
+
         t_start = time.perf_counter()
         hof = _evolve(
             population, toolbox, generations, mutation_rate, crossover_rate,
             threads, executor, elitism_count, immigration_rate, eval_timeout,
             history=history,
+            surrogate=surrogate,
+            archive=archive,
+            surrogate_top_fraction=surrogate_top_fraction,
+            surrogate_random_eval_fraction=surrogate_random_eval_fraction,
+            surrogate_retrain_interval=surrogate_retrain_interval,
+            surrogate_warmup_samples=surrogate_warmup_samples,
         )
         elapsed = time.perf_counter() - t_start
 
@@ -448,7 +551,7 @@ def run(
         }
         results.append(result)
 
-        print(f"  #{rank + 1}:  err={err:.0f}  nodes={nodes}  |  "
+        print(f"  #{rank + 1}:  err={err:.6f}  nodes={nodes}  |  "
               f"{len(graph.nodes)} nodes, {len(graph.edges)} edges  |  "
               f"valid(strict)={graph.is_valid(strict=True)}")
 
@@ -459,6 +562,17 @@ def run(
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
     print(f"\n  Saved to: {out_path}")
+
+    if surrogate is not None and surrogate.is_ready() and archive is not None:
+        import pickle
+        os.makedirs("output", exist_ok=True)
+        X, y = archive.get_data()
+        import numpy as np
+        np.save("output/rf_archive_X.npy", X)
+        np.save("output/rf_archive_y.npy", y)
+        with open("output/rf_model.pkl", "wb") as f:
+            pickle.dump(surrogate._model, f)
+        print(f"  RF model & archive saved to output/  (n_samples={archive.size()})")
 
     history.to_json(_cfg.history_path)
     print(f"\n{history.summary()}")

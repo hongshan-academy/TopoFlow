@@ -4,6 +4,8 @@ from typing import Dict, Set, Tuple
 
 def _pmx_perm(perm1: Tuple[int, ...], perm2: Tuple[int, ...]) -> Tuple[int, ...]:
     n = len(perm1)
+    if n < 2:
+        return perm1
     a, b = sorted(random.sample(range(n), 2))
     child = [-1] * n
 
