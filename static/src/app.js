@@ -1,6 +1,7 @@
 (function () {
 
   const GRAPH_BOUNDS = { width: 2700, height: 1680, padding: 36 };
+  const SAFE_CLAMP = { min: -32768, max: 32767 };
   const DEFAULT_VIEWPORT = { x: 0, y: 0, width: 900, height: 560 };
   const NODE_RADIUS = 28;
   const HIGH_FPS_THRESHOLD = 120;
@@ -479,8 +480,8 @@
     const node = {
       id: nextId(type),
       type,
-      x: clamp(point.x, GRAPH_BOUNDS.padding, GRAPH_BOUNDS.width - GRAPH_BOUNDS.padding),
-      y: clamp(point.y, GRAPH_BOUNDS.padding, GRAPH_BOUNDS.height - GRAPH_BOUNDS.padding),
+      x: clamp(point.x, SAFE_CLAMP.min, SAFE_CLAMP.max),
+      y: clamp(point.y, SAFE_CLAMP.min, SAFE_CLAMP.max),
     };
     state.graph.nodes.push(node);
     state.selected = { kind: "node", id: node.id };
@@ -490,8 +491,8 @@
 
   function moveNode(nodeId, point) {
     const node = getNode(nodeId);
-    node.x = clamp(point.x, GRAPH_BOUNDS.padding, GRAPH_BOUNDS.width - GRAPH_BOUNDS.padding);
-    node.y = clamp(point.y, GRAPH_BOUNDS.padding, GRAPH_BOUNDS.height - GRAPH_BOUNDS.padding);
+    node.x = clamp(point.x, SAFE_CLAMP.min, SAFE_CLAMP.max);
+    node.y = clamp(point.y, SAFE_CLAMP.min, SAFE_CLAMP.max);
   }
 
   function deleteSelectedObject() {
@@ -894,7 +895,6 @@
           <path d="M0,0 L0,6 L9,3 z" fill="#667085"></path>
         </marker>
       </defs>
-      <rect class="graph-boundary" x="0" y="0" width="${GRAPH_BOUNDS.width}" height="${GRAPH_BOUNDS.height}"></rect>
       <g class="edges">${edgesMarkup.join("")}${draftMarkup}</g>
       <g class="nodes">${nodesMarkup.join("")}</g>
     `;
@@ -1472,7 +1472,7 @@
       });
     });
 
-    forceLayout(nodes, edges, 3);
+    forceLayout(nodes, edges);
 
     return {
       nodes: nodes,
@@ -1545,8 +1545,8 @@
         if (am > cap) { a.ax *= cap / am; a.ay *= cap / am; }
         vel[n.id].vx = damp * (vel[n.id].vx + a.ax * dt);
         vel[n.id].vy = damp * (vel[n.id].vy + a.ay * dt);
-        n.x = clamp(n.x + vel[n.id].vx * dt, GRAPH_BOUNDS.padding, GRAPH_BOUNDS.width - GRAPH_BOUNDS.padding);
-        n.y = clamp(n.y + vel[n.id].vy * dt, GRAPH_BOUNDS.padding, GRAPH_BOUNDS.height - GRAPH_BOUNDS.padding);
+        n.x = clamp(n.x + vel[n.id].vx * dt, SAFE_CLAMP.min, SAFE_CLAMP.max);
+        n.y = clamp(n.y + vel[n.id].vy * dt, SAFE_CLAMP.min, SAFE_CLAMP.max);
       }
     }
   }

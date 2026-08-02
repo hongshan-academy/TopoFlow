@@ -1,72 +1,110 @@
 import random
-from typing import Dict, Set, Tuple
+from typing import List, Tuple
+
+from graph import Graph
+from ga.utils import find_1in_1out_subgraph, strip_in_out
 
 
-def _pmx_perm(perm1: Tuple[int, ...], perm2: Tuple[int, ...]) -> Tuple[int, ...]:
-    n = len(perm1)
-    if n < 2:
-        return perm1
-    a, b = sorted(random.sample(range(n), 2))
-    child = [-1] * n
+def crossover_subgraph_exchange(g1: Graph, g2: Graph) -> Tuple[Graph, Graph]:
+    m1 = find_1in_1out_subgraph(g1)
+    m2 = find_1in_1out_subgraph(g2)
 
-    for i in range(a, b):
-        child[i] = perm1[i]
+    if m1 is None or m2 is None:
+        return g1.copy(), g2.copy()
 
-    mapping: Dict[int, int] = {}
-    for i in range(a, b):
-        mapping.setdefault(perm1[i], perm2[i])
-        mapping.setdefault(perm2[i], perm1[i])
+    pred1, entry1, nodes1, exit1, succ1 = m1
+    pred2, entry2, nodes2, exit2, succ2 = m2
 
-    for i in range(n):
-        if a <= i < b:
-            continue
-        val = perm2[i]
-        visited: Set[int] = set()
-        while val in child and val not in visited:
-            visited.add(val)
-            if val in mapping:
-                val = mapping[val]
-            else:
-                break
-        child[i] = val
+    edges1_internal: List[Tuple[str, str]] = [
+        (u, v) for u, v in g1.edges if u in nodes1 and v in nodes1
+    ]
+    edges2_internal: List[Tuple[str, str]] = [
+        (u, v) for u, v in g2.edges if u in nodes2 and v in nodes2
+    ]
 
-    return tuple(child)
+    g1_new = g1.copy()
+    for n in nodes1:
+        if n in g1_new.nodes:
+            g1_new.remove_node(n)
+    for n in nodes2:
+        if n not in g1_new.nodes:
+            g1_new.add_node(n)
+    for u, v in edges2_internal:
+        g1_new.add_edge((u, v))
+    g1_new.add_edge((pred1, entry2))
+    g1_new.add_edge((exit2, succ1))
+
+    g2_new = g2.copy()
+    for n in nodes2:
+        if n in g2_new.nodes:
+            g2_new.remove_node(n)
+    for n in nodes1:
+        if n not in g2_new.nodes:
+            g2_new.add_node(n)
+    for u, v in edges1_internal:
+        g2_new.add_edge((u, v))
+    g2_new.add_edge((pred2, entry1))
+    g2_new.add_edge((exit1, succ2))
+
+    if not g1_new.is_valid(strict=True) or not g2_new.is_valid(strict=True):
+        return g1.copy(), g2.copy()
+
+    return g1_new, g2_new
 
 
-def crossover_pmx(ind1: Tuple[int, ...], ind2: Tuple[int, ...]) -> Tuple[Tuple[int, ...], Tuple[int, ...]]:
-    s2_a, s3_a, c2_a, c3_a = ind1[:4]
-    s2_b, s3_b, c2_b, c3_b = ind2[:4]
-    perm_a = ind1[4:]
-    perm_b = ind2[4:]
+def crossover_concat(g1: Graph, g2: Graph) -> Tuple[Graph, Graph]:
+    """Serial concatenation crossover.
 
-    counts_a = (s2_a, s3_a, c2_a, c3_a)
-    counts_b = (s2_b, s3_b, c2_b, c3_b)
+    In → A → Out  x  In → B → Out   →   In → A → B → Out
+                                          In → B → A → Out
+    """
+    if (
+        "In" not in g1.nodes or "Out" not in g1.nodes
+        or "In" not in g2.nodes or "Out" not in g2.nodes
+    ):
+        return g1.copy(), g2.copy()
+    if not g1.out_edges.get("In") or not g1.in_edges.get("Out"):
+        return g1.copy(), g2.copy()
+    if not g2.out_edges.get("In") or not g2.in_edges.get("Out"):
+        return g1.copy(), g2.copy()
 
-    if counts_a == counts_b:
-        child1 = counts_a + _pmx_perm(perm_a, perm_b)
-        child2 = counts_a + _pmx_perm(perm_b, perm_a)
-        return child1, child2
+    _, entry1 = g1.out_edges["In"][0]
+    exit1, _ = g1.in_edges["Out"][0]
+    _, entry2 = g2.out_edges["In"][0]
+    exit2, _ = g2.in_edges["Out"][0]
 
-    if random.random() < 0.5:
-        c1_counts = counts_a
-        c2_counts = counts_b
-        c1_base = list(perm_a)
-        c2_base = list(perm_b)
-    else:
-        c1_counts = counts_b
-        c2_counts = counts_a
-        c1_base = list(perm_b)
-        c2_base = list(perm_a)
+    if entry1 == exit1 or entry2 == exit2:
+        return g1.copy(), g2.copy()
 
-    if len(c1_base) >= 2:
-        i, j = random.sample(range(len(c1_base)), 2)
-        c1_base[i], c1_base[j] = c1_base[j], c1_base[i]
+    sub_nodes2, sub_edges2, e2, x2 = strip_in_out(g2)
+    if not sub_nodes2:
+        return g1.copy(), g2.copy()
 
-    if len(c2_base) >= 2:
-        i, j = random.sample(range(len(c2_base)), 2)
-        c2_base[i], c2_base[j] = c2_base[j], c2_base[i]
+    # Offspring 1: A → B
+    edges1 = [(u, v) if not (u == exit1 and v == "Out") else (exit1, e2)
+              for u, v in g1.edges]
+    edges1.extend(sub_edges2)
+    edges1.append((x2, "Out"))
+    g1_new = Graph.from_edges(edges1)
 
-    return (
-        c1_counts + tuple(c1_base),
-        c2_counts + tuple(c2_base),
-    )
+    sub_nodes1, sub_edges1, e1, x1 = strip_in_out(g1)
+    if not sub_nodes1:
+        return g1_new if g1_new.is_valid(strict=True) else g1.copy(), g2.copy()
+
+    # Offspring 2: B → A
+    edges2 = [(u, v) if not (u == exit2 and v == "Out") else (exit2, e1)
+              for u, v in g2.edges]
+    edges2.extend(sub_edges1)
+    edges2.append((x1, "Out"))
+    g2_new = Graph.from_edges(edges2)
+
+    if not g1_new.is_valid(strict=True) or not g2_new.is_valid(strict=True):
+        return g1.copy(), g2.copy()
+
+    return g1_new, g2_new
+
+
+CROSSOVER_FNS = [
+    crossover_subgraph_exchange,
+    crossover_concat,
+]

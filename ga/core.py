@@ -15,8 +15,9 @@ from tqdm import tqdm
 
 from config import DEFAULT_CONFIG as _cfg
 
-from ga.chromosome import make_random_chromosome, decode
-from ga.crossover import crossover_pmx
+from graph import Graph, Edge
+from ga.generation import generate_strict_graph
+from ga.crossover import CROSSOVER_FNS
 from ga.fitness import make_evaluate, evaluate_cached
 from ga.history import History
 from ga.mutation import MUTATION_FNS
@@ -32,12 +33,12 @@ def _worker_init(target_pq: Tuple[int, int], threads: int, max_denominator: int 
     _worker_eval_fn = make_evaluate(target_pq, threads, max_denominator=max_denominator, mode=mode)
 
 
-def _eval_one(chromosome: Tuple[int, ...]) -> Tuple[float, int]:
+def _eval_one(edges_tuple: Tuple[Edge, ...]) -> Tuple[float, int]:
     global _worker_eval_fn
     try:
         if _worker_eval_fn is not None:
-            return _worker_eval_fn(chromosome)  # type: ignore[no-any-return]
-        return evaluate_cached(chromosome, (0, 1), 1)
+            return _worker_eval_fn(edges_tuple)  # type: ignore[no-any-return]
+        return evaluate_cached(edges_tuple, (0, 1), 1)
     except Exception:
         return (float("inf"), 0)
 
@@ -49,13 +50,12 @@ def _generate_random_individual() -> creator.Individual:
             weights=_cfg.internal_nodes_weights,
             k=1,
         )[0]
-        chrom = make_random_chromosome(n_internal)
-        g = decode(chrom)
+        g = generate_strict_graph(n_internal)
         if g.is_valid(strict=True) and len(g.edges) <= _cfg.max_edges:
-            return creator.Individual(chrom)
+            return creator.Individual(tuple(sorted(g.edges)))
     n_internal = min(_cfg.internal_nodes_choices)
-    chrom = make_random_chromosome(n_internal)
-    return creator.Individual(chrom)
+    g = generate_strict_graph(n_internal)
+    return creator.Individual(tuple(sorted(g.edges)))
 
 
 def _mutate_wrapper(
@@ -65,11 +65,28 @@ def _mutate_wrapper(
 ) -> Tuple[creator.Individual]:
     for _ in range(max_tries):
         fn = random.choices(MUTATION_FNS, weights=weights, k=1)[0]
-        result = fn(individual)
-        g = decode(result)
-        if g.is_valid(strict=True) and len(g.edges) <= _cfg.max_edges:
-            return (creator.Individual(result),)
+        g = Graph.from_edges(list(individual))
+        result = fn(g)
+        if result is not None and len(result.edges) <= _cfg.max_edges:
+            return (creator.Individual(tuple(sorted(result.edges))),)
     return (individual,)
+
+
+def _crossover_wrapper(
+    ind1: creator.Individual,
+    ind2: creator.Individual,
+    weights: Tuple[float, ...],
+) -> Tuple[creator.Individual, creator.Individual]:
+    g1 = Graph.from_edges(list(ind1))
+    g2 = Graph.from_edges(list(ind2))
+    fn = random.choices(CROSSOVER_FNS, weights=weights, k=1)[0]
+    c1, c2 = fn(g1, g2)
+    if len(c1.edges) > _cfg.max_edges or len(c2.edges) > _cfg.max_edges:
+        return (ind1, ind2)
+    return (
+        creator.Individual(tuple(sorted(c1.edges))),
+        creator.Individual(tuple(sorted(c2.edges))),
+    )
 
 
 def _evolve(
@@ -98,6 +115,10 @@ def _evolve(
     _immig_rate = max(1, int(pop_size * immigration_rate)) if immigration_rate > 0 else 0
 
     pending: Dict[cf.Future[Tuple[float, int]], int] = {}
+    truly_evaluated: Set[Tuple[Edge, ...]] = set()
+    for ind in population:
+        if ind.fitness.values[0] != float("inf"):
+            truly_evaluated.add(tuple(ind))
     stagnation = 0
     best_ever_err = float("inf")
 
@@ -120,6 +141,7 @@ def _evolve(
                 pending[new_fut] = idx
                 return None
             population[idx].fitness.values = fitness
+            truly_evaluated.add(tuple(population[idx]))
             return idx
 
         def _surrogate_filter(individuals, top_frac, rand_frac):
@@ -142,9 +164,12 @@ def _evolve(
                     chosen = np.random.choice(remaining, n_rand, replace=False).tolist()
                     eval_set.update(chosen)
             for i, ind in enumerate(individuals):
-                g = decode(tuple(ind))
-                pred_err = max(0.0, float(predictions[i]))
-                ind.fitness.values = (pred_err, len(g.edges))
+                g = Graph.from_edges(list(ind))
+                if i in eval_set:
+                    ind.fitness.values = (float("inf"), len(g.nodes))
+                else:
+                    pred_err = max(0.0, float(predictions[i]))
+                    ind.fitness.values = (pred_err, len(g.nodes))
             return eval_set
 
         n_harvested = 0
@@ -229,6 +254,13 @@ def _evolve(
 
         immigrants = [toolbox.individual() for _ in range(n_immigrants)]
 
+        for i, ind in enumerate(selected):
+            if len(tuple(ind)) > _cfg.max_edges:
+                selected[i] = toolbox.individual()
+        for i, ind in enumerate(immigrants):
+            if len(tuple(ind)) > _cfg.max_edges:
+                immigrants[i] = toolbox.individual()
+
         sorted_pending_idxs = sorted(new_pending_idxs)
         pending_individuals = [population[i] for i in sorted_pending_idxs]
 
@@ -244,7 +276,7 @@ def _evolve(
         new_pop = elites + pending_individuals + selected + immigrants
         population[:] = new_pop
 
-        hof.update(ready)
+        hof.update([ind for ind in ready if tuple(ind) in truly_evaluated])
 
         new_individuals = selected + immigrants
 
@@ -263,7 +295,7 @@ def _evolve(
 
         edges_list = []
         for ind in ready:
-            g = decode(ind)
+            g = Graph.from_edges(list(ind))
             edges_list.append(len(g.edges))
 
         if errs_list:
@@ -287,7 +319,7 @@ def _evolve(
 
             best_graph_edges: Optional[List[List[str]]] = None
             if best_ind is not None:
-                graph = decode(best_ind)
+                graph = Graph.from_edges(list(best_ind))
                 best_graph_edges = [list(e) for e in graph.edges]
                 history.record_best(
                     gen=gen,
@@ -332,6 +364,12 @@ def _evolve(
             survivors = [toolbox.clone(ind) for ind in ready_sorted[:n_keep]]
             new_randoms = [toolbox.individual() for _ in range(pop_size - n_keep)]
             new_indiv_list = [creator.Individual(c) for c in new_randoms]
+            for i, ind in enumerate(survivors):
+                if len(tuple(ind)) > _cfg.max_edges:
+                    survivors[i] = toolbox.individual()
+            for i, ind in enumerate(new_indiv_list):
+                if len(tuple(ind)) > _cfg.max_edges:
+                    new_indiv_list[i] = toolbox.individual()
             eval_set = set(range(len(new_indiv_list)))
             if surrogate is not None and surrogate.is_ready():
                 eval_set = _surrogate_filter(new_indiv_list, surrogate_top_fraction, surrogate_random_eval_fraction)
@@ -437,11 +475,24 @@ def run(
     toolbox.register("individual", _generate_random_individual)
     toolbox.register("population", tools.initRepeat, list, toolbox.individual)
     toolbox.register("select", tools.selTournament, tournsize=tournament_size)
-    toolbox.register("mate", crossover_pmx)
+    toolbox.register("mate", partial(_crossover_wrapper, weights=tuple(_cfg.crossover_weights)))
     toolbox.register("mutate", partial(_mutate_wrapper, weights=mutation_weights, max_tries=_cfg.mutation_max_tries))
 
     print(f"\nGenerating initial population ({pop_size} individuals)...")
     population = toolbox.population(n=pop_size)
+
+    if _cfg.seed_path is not None:
+        import json
+        with open(_cfg.seed_path, encoding="utf-8") as sf:
+            seed_data = json.load(sf)
+        seed_graphs = seed_data.get("collection", {})
+        for i, entry in enumerate(seed_graphs.values()):
+            if i >= pop_size:
+                break
+            seed_edges_list = [(e[0], e[1]) for e in entry["edges"]]
+            seed_edges_tuple = tuple(sorted(seed_edges_list))
+            population[i] = creator.Individual(seed_edges_tuple)
+        print(f"  Seeded with {min(len(seed_graphs), pop_size)} known solution(s) from {_cfg.seed_path}")
 
     print(f"Evaluating initial population ({n_workers} workers)...")
     t_eval = time.perf_counter()
@@ -535,9 +586,14 @@ def run(
     print(f"  Time:              {elapsed:.1f}s ({elapsed/60:.1f}min)")
 
     for rank, ind in enumerate(hof):
-        graph = decode(ind)
-        err = ind.fitness.values[0]
-        nodes = ind.fitness.values[1]
+        graph = Graph.from_edges(list(ind))
+        real_err, real_nodes = evaluate_cached(
+            tuple(ind), target_pq, threads=threads,
+            max_denominator=max_denominator,
+            mode=mode,  # type: ignore[arg-type]
+        )
+        err = real_err if real_err != float("inf") else ind.fitness.values[0]
+        nodes = real_nodes if real_nodes > 0 else ind.fitness.values[1]
 
         result = {
             "rank": rank + 1,

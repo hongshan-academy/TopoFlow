@@ -1,163 +1,86 @@
-import bisect
-from typing import List, Tuple
+from collections import defaultdict
+from typing import Dict, List, Tuple
 
-from ga.chromosome import (
-    decode, port_count, _make_out_ports, _make_in_ports,
-)
+from graph import Graph, Edge
 
 FEATURE_NAMES = [
-    "s2", "s3", "c2", "c3",
-    "total_nodes", "total_ports", "balance_left", "balance_right",
-    "inv_ratio", "fixed_pts_ratio", "cycle_cnt_ratio",
-    "longest_cycle_ratio", "lis_ratio", "is_derangement",
-    "edges_per_port", "self_loops_per_port", "is_valid",
-    "avg_out_deg", "max_out_deg", "avg_in_deg", "max_in_deg",
+    "n_nodes", "n_edges", "n_internal",
+    "count_12", "count_13", "count_21", "count_31",
+    "avg_in_deg", "avg_out_deg", "max_in_deg", "max_out_deg",
+    "edge_density", "ratio_12_to_21", "ratio_13_to_31",
+    "longest_path_norm", "is_valid",
 ]
 
 FEATURE_DIM = len(FEATURE_NAMES)
 
 
-def _inversions(perm: Tuple[int, ...]) -> int:
-    n = len(perm)
-    if n <= 1:
-        return 0
-    count = 0
-    for i in range(n):
-        pi = perm[i]
-        for j in range(i + 1, n):
-            if pi > perm[j]:
-                count += 1
-    return count
+def _longest_path_from_in(g: Graph) -> int:
+    in_degree: Dict[str, int] = defaultdict(int)
+    for u in g.nodes:
+        in_degree[u] = len(g.in_edges.get(u, []))
+    dist: Dict[str, int] = {n: 0 for n in g.nodes}
+    queue = ["In"]
+    while queue:
+        u = queue.pop(0)
+        for _, v in g.out_edges.get(u, []):
+            dist[v] = max(dist[v], dist[u] + 1)
+            in_degree[v] -= 1
+            if in_degree[v] == 0:
+                queue.append(v)
+    return dist.get("Out", 0)
 
 
-def _inversions_ratio(perm: Tuple[int, ...]) -> float:
-    n = len(perm)
-    if n <= 1:
-        return 0.0
-    return _inversions(perm) / (n * (n - 1) / 2)
+def extract_features(edges_tuple: Tuple[Edge, ...]) -> List[float]:
+    g = Graph.from_edges(list(edges_tuple))
 
+    n_nodes = len(g.nodes)
+    n_edges = len(g.edges)
+    n_internal = n_nodes - 2
 
-def _fixed_points_ratio(perm: Tuple[int, ...]) -> float:
-    n = len(perm)
-    if n == 0:
-        return 0.0
-    return sum(1 for i, p in enumerate(perm) if i == p) / n
+    deg_counts: Dict[Tuple[int, int], int] = defaultdict(int)
+    in_degs: List[float] = []
+    out_degs: List[float] = []
+    internal_nodes = [n for n in g.nodes if n not in ("In", "Out")]
 
+    for n in internal_nodes:
+        d = tuple(g.degrees.get(n, (0, 0)))
+        deg_counts[d] += 1 # type: ignore
+        in_degs.append(float(d[0]))
+        out_degs.append(float(d[1]))
 
-def _cycles(perm: Tuple[int, ...]) -> List[int]:
-    n = len(perm)
-    visited = [False] * n
-    lengths: List[int] = []
-    for i in range(n):
-        if not visited[i]:
-            length = 0
-            j = i
-            while not visited[j]:
-                visited[j] = True
-                j = perm[j]
-                length += 1
-            lengths.append(length)
-    return lengths
+    count_12 = float(deg_counts.get((1, 2), 0))
+    count_13 = float(deg_counts.get((1, 3), 0))
+    count_21 = float(deg_counts.get((2, 1), 0))
+    count_31 = float(deg_counts.get((3, 1), 0))
 
+    avg_in = sum(in_degs) / len(in_degs) if in_degs else 0.0
+    avg_out = sum(out_degs) / len(out_degs) if out_degs else 0.0
+    max_in = (max(in_degs) if in_degs else 0) / 3.0
+    max_out = (max(out_degs) if out_degs else 0) / 3.0
 
-def _cycle_count_ratio(perm: Tuple[int, ...]) -> float:
-    n = len(perm)
-    if n == 0:
-        return 0.0
-    return len(_cycles(perm)) / n
+    max_possible = n_nodes * (n_nodes - 1) / 2.0
+    edge_density = n_edges / max_possible if max_possible > 0 else 0.0
 
+    ratio_12_to_21 = count_12 / max(count_21, 1.0)
+    ratio_13_to_31 = count_13 / max(count_31, 1.0)
 
-def _longest_cycle_ratio(perm: Tuple[int, ...]) -> float:
-    n = len(perm)
-    if n == 0:
-        return 0.0
-    return max(_cycles(perm)) / n
+    longest_path = _longest_path_from_in(g)
+    longest_path_norm = longest_path / max(n_internal, 1)
 
-
-def _lis_length(perm: Tuple[int, ...]) -> int:
-    tails: List[int] = []
-    for x in perm:
-        i = bisect.bisect_left(tails, x)
-        if i == len(tails):
-            tails.append(x)
-        else:
-            tails[i] = x
-    return len(tails)
-
-
-def _lis_ratio(perm: Tuple[int, ...]) -> float:
-    n = len(perm)
-    if n == 0:
-        return 1.0
-    return _lis_length(perm) / n
-
-
-def _is_derangement(perm: Tuple[int, ...]) -> float:
-    return 1.0 if all(i != p for i, p in enumerate(perm)) else 0.0
-
-
-def extract_features(chromosome: Tuple[int, ...]) -> List[float]:
-    s2, s3, c2, c3 = int(chromosome[0]), int(chromosome[1]), int(chromosome[2]), int(chromosome[3])
-    perm = tuple(int(x) for x in chromosome[4:])
-
-    n_ports = len(perm)
-
-    total_nodes = 2 + s2 + s3 + c2 + c3
-    balance_left = s2 + 2 * s3
-    balance_right = c2 + 2 * c3
-
-    perm_features = [
-        _inversions_ratio(perm),
-        _fixed_points_ratio(perm),
-        _cycle_count_ratio(perm),
-        _longest_cycle_ratio(perm),
-        _lis_ratio(perm),
-        _is_derangement(perm),
-    ]
-
-    graph = decode(chromosome)
-    edges = len(graph.edges)
-
-    edges_per_port = edges / n_ports if n_ports > 0 else 0.0
-
-    out_ports = _make_out_ports(s2, s3, c2, c3)
-    in_ports = _make_in_ports(s2, s3, c2, c3)
-    self_loops = 0
-    for out_idx, in_idx in enumerate(perm):
-        if out_ports[out_idx][0] == in_ports[in_idx][0]:
-            self_loops += 1
-    self_loops_per_port = self_loops / n_ports if n_ports > 0 else 0.0
-
-    is_valid = 1.0 if graph.is_valid() else 0.0
-
-    internal_out: List[int] = []
-    internal_in: List[int] = []
-    for node in graph.nodes:
-        if node in ("In", "Out"):
-            continue
-        in_d, out_d = graph.degrees[node]
-        internal_in.append(in_d)
-        internal_out.append(out_d)
-
-    if internal_out:
-        avg_out = sum(internal_out) / len(internal_out)
-        max_out = max(internal_out) / 3.0
-    else:
-        avg_out = 0.0
-        max_out = 0.0
-
-    if internal_in:
-        avg_in = sum(internal_in) / len(internal_in)
-        max_in = max(internal_in) / 3.0
-    else:
-        avg_in = 0.0
-        max_in = 0.0
+    is_valid = 1.0 if g.is_valid() else 0.0
 
     return [
-        float(s2), float(s3), float(c2), float(c3),
-        float(total_nodes), float(n_ports),
-        float(balance_left), float(balance_right),
-        *perm_features,
-        edges_per_port, self_loops_per_port, is_valid,
-        avg_out / 3.0, max_out, avg_in / 3.0, max_in,
+        float(n_nodes),
+        float(n_edges),
+        float(n_internal),
+        count_12, count_13, count_21, count_31,
+        avg_in / 3.0,
+        avg_out / 3.0,
+        max_in,
+        max_out,
+        edge_density,
+        ratio_12_to_21,
+        ratio_13_to_31,
+        longest_path_norm,
+        is_valid,
     ]

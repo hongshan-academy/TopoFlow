@@ -2,13 +2,11 @@ from fractions import Fraction
 from functools import lru_cache
 from typing import Any, Tuple, Literal, Union
 
-from graph import Graph
+from graph import Graph, Edge
 from solver import solve
 from simulator import simulate
 from config import DEFAULT_CONFIG as _cfg
 from result import SolverResult, SimulatorResult
-
-from ga.chromosome import decode
 
 
 def _extract_source_flow(graph: Graph, result: Union[SolverResult, SimulatorResult]) -> float:
@@ -21,15 +19,17 @@ def _extract_source_flow(graph: Graph, result: Union[SolverResult, SimulatorResu
 
 
 def evaluate_cached(
-    chromosome: Tuple[int, ...],
+    edges_tuple: Tuple[Edge, ...],
     target_pq: Tuple[int, int],
     threads: int = 1,
     max_denominator: int = 10000,
     mode: Literal['MILP', 'simulation', 'mixed'] = 'MILP',
 ) -> Tuple[float, int]:
-    graph = decode(chromosome)
+    graph = Graph.from_edges(list(edges_tuple))
     if mode == 'mixed':
-        actual_mode: Literal['MILP', 'simulation'] = 'simulation' if len(graph.edges) <= _cfg.mixed_edge_threshold else 'MILP'
+        actual_mode: Literal['MILP', 'simulation'] = (
+            'simulation' if len(graph.edges) <= _cfg.mixed_edge_threshold else 'MILP'
+        )
     else:
         actual_mode = mode
     if actual_mode == 'simulation':
@@ -47,15 +47,6 @@ def evaluate_cached(
     error = float(abs(target - frac))
     return (error, len(graph.nodes))
 
-
-def _mp_eval_worker(args: Tuple[Tuple[int, ...], Tuple[int, int], int, int, Literal['MILP', 'simulation', 'mixed']]) -> Tuple[float, int]:
-    chromosome, target_pq, threads, max_denominator, mode = args
-    try:
-        return evaluate_cached(chromosome, target_pq, threads=threads, max_denominator=max_denominator, mode=mode)
-    except Exception:
-        return (float("inf"), 0)
-
-
 def make_evaluate(
     target_pq: Tuple[int, int],
     threads: int = 1,
@@ -63,6 +54,6 @@ def make_evaluate(
     mode: Literal['MILP', 'simulation', 'mixed'] = 'MILP',
 ) -> Any:
     @lru_cache(maxsize=_cfg.solver_cache_size)
-    def _evaluate(chromosome: Tuple[int, ...]) -> Tuple[float, int]:
-        return evaluate_cached(chromosome, target_pq, threads=threads, max_denominator=max_denominator, mode=mode)
+    def _evaluate(edges_tuple: Tuple[Edge, ...]) -> Tuple[float, int]:
+        return evaluate_cached(edges_tuple, target_pq, threads=threads, max_denominator=max_denominator, mode=mode)
     return _evaluate

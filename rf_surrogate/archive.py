@@ -1,17 +1,18 @@
-from collections import deque
 from typing import Deque, Tuple
 
+from collections import deque
 import numpy as np
 
+from graph import Edge
 from rf_surrogate.features import extract_features
 
 
 class SurrogateArchive:
     def __init__(self, maxlen: int = 5000) -> None:
-        self._samples: Deque[Tuple[Tuple[int, ...], float]] = deque(maxlen=maxlen)
+        self._samples: Deque[Tuple[Tuple[Edge, ...], float]] = deque(maxlen=maxlen)
 
-    def add(self, chromosome: Tuple[int, ...], fitness_error: float) -> None:
-        self._samples.append((chromosome, fitness_error))
+    def add(self, edges_tuple: Tuple[Edge, ...], fitness_error: float) -> None:
+        self._samples.append((edges_tuple, fitness_error))
 
     def get_data(self) -> Tuple[np.ndarray, np.ndarray]:
         X_list = []

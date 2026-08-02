@@ -106,6 +106,14 @@ class Graph(object):
 
         return Graph(nodes, edges)
 
+    @staticmethod
+    def from_edges(edges: List[Edge]) -> 'Graph':
+        nodes: Set[Node] = set()
+        for u, v in edges:
+            nodes.add(u)
+            nodes.add(v)
+        return Graph(nodes, edges, _validate=False)
+
     def copy(self) -> 'Graph':
         new_graph = Graph.__new__(Graph)
         new_graph.nodes = self.nodes.copy()
