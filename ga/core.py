@@ -1,4 +1,5 @@
 import concurrent.futures as cf
+import os
 import random
 import time
 
@@ -8,7 +9,9 @@ from typing import Dict, List, Literal, Optional, Set, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from rf_surrogate.model import SurrogateRF
+    from nn_surrogate.model import SurrogateGNN
     from rf_surrogate.archive import SurrogateArchive
+    from potential_net.model import PotentialNet
 
 from deap import base, creator, tools
 from tqdm import tqdm
@@ -37,8 +40,9 @@ def _eval_one(edges_tuple: Tuple[Edge, ...]) -> Tuple[float, int]:
     global _worker_eval_fn
     try:
         if _worker_eval_fn is not None:
-            return _worker_eval_fn(edges_tuple)  # type: ignore[no-any-return]
-        return evaluate_cached(edges_tuple, (0, 1), 1)
+            result = _worker_eval_fn(edges_tuple)
+            return (result[0], result[1])  # strip flow_ratio
+        return evaluate_cached(edges_tuple, (0, 1), 1)[:2]
     except Exception:
         return (float("inf"), 0)
 
@@ -101,12 +105,20 @@ def _evolve(
     immigration_rate: float = 0.0,
     eval_timeout: Optional[float] = None,
     history: Optional[History] = None,
-    surrogate: Optional["SurrogateRF"] = None,
+    surrogate = None,
     archive: Optional["SurrogateArchive"] = None,
     surrogate_top_fraction: float = 0.25,
     surrogate_random_eval_fraction: float = 0.05,
     surrogate_retrain_interval: int = 5,
     surrogate_warmup_samples: int = 80,
+    surrogate_type: str = "rf",
+    target_pq: Tuple[int, int] = (325, 799),
+    pretrained_loaded: bool = False,
+    potential_model: Optional["PotentialNet"] = None,
+    mutation_budget_base: int = 1,
+    mutation_budget_max_extra: int = 4,
+    budget_short_weight: float = 0.4,
+    budget_medium_weight: float = 0.6,
 ) -> tools.HallOfFame:
     hof = tools.HallOfFame(5)
     pop_size = len(population)
@@ -125,9 +137,15 @@ def _evolve(
     pbar = tqdm(total=ngen, desc="Evolving", unit="gen", dynamic_ncols=True)
 
     for gen in range(ngen):
-        if gen % surrogate_retrain_interval == 0 and surrogate is not None and archive is not None and archive.size() >= surrogate_warmup_samples:
-            X, y = archive.get_data()
-            surrogate.fit(X, y)
+        if gen % surrogate_retrain_interval == 0 and surrogate is not None and archive is not None and archive.size() >= surrogate_warmup_samples and not pretrained_loaded:
+            if surrogate_type == "gnn":
+                raw = archive.get_raw_samples()
+                samples = [s[0] for s in raw]
+                y_arr = np.array([s[1] for s in raw], dtype=np.float64)
+                surrogate.fit(samples, y_arr)
+            else:
+                X, y = archive.get_data()
+                surrogate.fit(X, y)
 
         t0 = time.perf_counter()
 
@@ -145,15 +163,22 @@ def _evolve(
             return idx
 
         def _surrogate_filter(individuals, top_frac, rand_frac):
-            from rf_surrogate.features import extract_features
             if not surrogate.is_ready():
                 return set(range(len(individuals)))
             n = len(individuals)
             if n == 0:
                 return set()
-            features_list = [extract_features(tuple(ind)) for ind in individuals]
-            features = np.array(features_list, dtype=np.float64)
-            predictions = surrogate.predict(features)
+            if surrogate_type == "gnn":
+                from nn_surrogate.data import build_predict_list
+                data_list = build_predict_list([tuple(ind) for ind in individuals])
+                ratios = surrogate.predict(data_list)
+                target_ratio = target_pq[0] / target_pq[1]
+                predictions = np.abs(target_ratio - ratios)
+            else:
+                from rf_surrogate.features import extract_features
+                features_list = [extract_features(tuple(ind)) for ind in individuals]
+                features = np.array(features_list, dtype=np.float64)
+                predictions = surrogate.predict(features)
             sorted_idx = np.argsort(predictions)
             n_top = max(1, int(n * top_frac))
             eval_set = set(sorted_idx[:n_top].tolist())
@@ -246,11 +271,54 @@ def _evolve(
                 n_crossed += 2
 
         n_mutated = 0
-        for i, ind in enumerate(selected):
-            if random.random() < mutation_rate:
-                selected[i], = toolbox.mutate(ind)
-                del selected[i].fitness.values
-                n_mutated += 1
+        if potential_model is not None and potential_model.is_ready() and len(selected) > 0:
+            from potential_net.data import build_predict_batch
+            data_list = build_predict_batch(
+                [tuple(ind) for ind in selected], target_pq
+            )
+            flow_pred, s_short, s_medium = potential_model.predict(data_list)
+            target_ratio = target_pq[0] / target_pq[1]
+            flow_score = np.exp(-np.abs(flow_pred - target_ratio) / 0.01)
+            raw_potentials = flow_score * (budget_short_weight * s_short + budget_medium_weight * s_medium)
+            p_min, p_max = raw_potentials.min(), raw_potentials.max()
+            if p_max - p_min > 1e-8:
+                potentials = (raw_potentials - p_min) / (p_max - p_min)
+            else:
+                potentials = np.ones_like(raw_potentials) * 0.5
+
+            sorted_idx = np.argsort(raw_potentials)[::-1]
+            n_top = max(1, int(len(selected) * 0.5))
+            top_set = set(sorted_idx[:n_top].tolist())
+
+            for i, ind in enumerate(selected):
+                if i in top_set:
+                    n_tries = mutation_budget_base + int(mutation_budget_max_extra * potentials[i])
+                    best_ind = ind
+                    best_score = raw_potentials[i]
+                    for _ in range(n_tries):
+                        variant, = toolbox.mutate(toolbox.clone(ind))
+                        v_data = build_predict_batch([tuple(variant)], target_pq)
+                        vf, vs, vm = potential_model.predict(v_data)
+                        v_flow_score = np.exp(-abs(vf[0] - target_ratio) / 0.01)
+                        v_score = v_flow_score * (budget_short_weight * vs[0] + budget_medium_weight * vm[0])
+                        if v_score > best_score:
+                            best_ind = variant
+                            best_score = v_score
+                    if best_ind is not ind:
+                        selected[i] = creator.Individual(tuple(sorted(best_ind)))
+                        del selected[i].fitness.values
+                        n_mutated += 1
+                else:
+                    if random.random() < mutation_rate:
+                        selected[i], = toolbox.mutate(ind)
+                        del selected[i].fitness.values
+                        n_mutated += 1
+        else:
+            for i, ind in enumerate(selected):
+                if random.random() < mutation_rate:
+                    selected[i], = toolbox.mutate(ind)
+                    del selected[i].fitness.values
+                    n_mutated += 1
 
         immigrants = [toolbox.individual() for _ in range(n_immigrants)]
 
@@ -416,13 +484,18 @@ def run(
     max_denominator: int = 10000,
     mode: Optional[str] = None,
     output_path: Optional[str] = None,
-    surrogate_enabled: Optional[bool] = None,
+    surrogate_type: Optional[str] = None,
     surrogate_top_fraction: Optional[float] = None,
     surrogate_random_eval_fraction: Optional[float] = None,
     surrogate_warmup_samples: Optional[int] = None,
     surrogate_retrain_interval: Optional[int] = None,
     surrogate_n_estimators: Optional[int] = None,
     surrogate_max_depth: Optional[int] = None,
+    potential_model_path: Optional[str] = None,
+    mutation_budget_base: Optional[int] = None,
+    mutation_budget_max_extra: Optional[int] = None,
+    budget_short_weight: Optional[float] = None,
+    budget_medium_weight: Optional[float] = None,
 ) -> List[Dict[str, object]]:
     target_pq = target_pq if target_pq is not None else _cfg.target_pq
     pop_size = pop_size or _cfg.pop_size
@@ -438,13 +511,18 @@ def run(
     threads = solver_threads if solver_threads is not None else _cfg.solver_threads
     mode = mode if mode is not None else _cfg.mode
     output_path = output_path or _cfg.output_path
-    surrogate_enabled = surrogate_enabled if surrogate_enabled is not None else _cfg.surrogate_enabled
+    surrogate_type = surrogate_type if surrogate_type is not None else _cfg.surrogate_type
     surrogate_top_fraction = surrogate_top_fraction if surrogate_top_fraction is not None else _cfg.surrogate_top_fraction
     surrogate_random_eval_fraction = surrogate_random_eval_fraction if surrogate_random_eval_fraction is not None else _cfg.surrogate_random_eval_fraction
     surrogate_warmup_samples = surrogate_warmup_samples if surrogate_warmup_samples is not None else _cfg.surrogate_warmup_samples
     surrogate_retrain_interval = surrogate_retrain_interval if surrogate_retrain_interval is not None else _cfg.surrogate_retrain_interval
     surrogate_n_estimators = surrogate_n_estimators if surrogate_n_estimators is not None else _cfg.surrogate_n_estimators
     surrogate_max_depth = surrogate_max_depth if surrogate_max_depth is not None else _cfg.surrogate_max_depth
+    potential_model_path = potential_model_path if potential_model_path is not None else _cfg.potential_model_path
+    mutation_budget_base = mutation_budget_base if mutation_budget_base is not None else _cfg.potential_mutation_budget_base
+    mutation_budget_max_extra = mutation_budget_max_extra if mutation_budget_max_extra is not None else _cfg.potential_mutation_budget_max_extra
+    budget_short_weight = budget_short_weight if budget_short_weight is not None else _cfg.potential_budget_short_weight
+    budget_medium_weight = budget_medium_weight if budget_medium_weight is not None else _cfg.potential_budget_medium_weight
 
     print(f"{'='*60}")
     print(f"  TopoFlow GA |  Target = {target_pq[0]}/{target_pq[1]}")
@@ -549,21 +627,39 @@ def run(
 
         archive = None
         surrogate = None
-        if surrogate_enabled:
+        pretrained_loaded = False
+        if surrogate_type is not None:
             from rf_surrogate.archive import SurrogateArchive
-            from rf_surrogate.model import SurrogateRF
             archive = SurrogateArchive()
             for ind in population:
                 fit = ind.fitness.values[0]
                 if fit != float("inf"):
                     archive.add(tuple(ind), fit)
-            if archive.size() >= surrogate_warmup_samples:
+            if surrogate_type == "gnn":
+                pretrained_path = "output/trained_gnn.pt"
+                if pretrained_loaded := os.path.exists(pretrained_path):
+                    from nn_surrogate.model import SurrogateGNN
+                    surrogate = SurrogateGNN()
+                    surrogate.load(pretrained_path)
+                    print(f"  Loaded pre-trained GNN: {pretrained_path}")
+                else:
+                    print(f"  No pre-trained GNN at {pretrained_path}")
+                    print(f"  Run: python tools/train_gnn.py")
+            elif archive.size() >= surrogate_warmup_samples:
+                from rf_surrogate.model import SurrogateRF
                 surrogate = SurrogateRF(
                     n_estimators=surrogate_n_estimators,
                     max_depth=surrogate_max_depth,
                 )
                 X, y = archive.get_data()
                 surrogate.fit(X, y)
+
+        potential_model = None
+        if potential_model_path is not None and os.path.exists(potential_model_path):
+            from potential_net.model import PotentialNet
+            potential_model = PotentialNet()
+            potential_model.load(potential_model_path)
+            print(f"  Loaded potential model: {potential_model_path}")
 
         t_start = time.perf_counter()
         hof = _evolve(
@@ -576,6 +672,14 @@ def run(
             surrogate_random_eval_fraction=surrogate_random_eval_fraction,
             surrogate_retrain_interval=surrogate_retrain_interval,
             surrogate_warmup_samples=surrogate_warmup_samples,
+            surrogate_type=surrogate_type,
+            target_pq=target_pq,
+            pretrained_loaded=pretrained_loaded,
+            potential_model=potential_model,
+            mutation_budget_base=mutation_budget_base,
+            mutation_budget_max_extra=mutation_budget_max_extra,
+            budget_short_weight=budget_short_weight,
+            budget_medium_weight=budget_medium_weight,
         )
         elapsed = time.perf_counter() - t_start
 
@@ -587,7 +691,7 @@ def run(
 
     for rank, ind in enumerate(hof):
         graph = Graph.from_edges(list(ind))
-        real_err, real_nodes = evaluate_cached(
+        real_err, real_nodes, _ = evaluate_cached(
             tuple(ind), target_pq, threads=threads,
             max_denominator=max_denominator,
             mode=mode,  # type: ignore[arg-type]
@@ -612,7 +716,6 @@ def run(
               f"valid(strict)={graph.is_valid(strict=True)}")
 
     import json
-    import os
     out_path = output_path or os.path.join("output", "ga_top5.json")
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
@@ -620,15 +723,29 @@ def run(
     print(f"\n  Saved to: {out_path}")
 
     if surrogate is not None and surrogate.is_ready() and archive is not None:
-        import pickle
         os.makedirs("output", exist_ok=True)
-        X, y = archive.get_data()
-        import numpy as np
-        np.save("output/rf_archive_X.npy", X)
-        np.save("output/rf_archive_y.npy", y)
-        with open("output/rf_model.pkl", "wb") as f:
-            pickle.dump(surrogate._model, f)
-        print(f"  RF model & archive saved to output/  (n_samples={archive.size()})")
+        if surrogate_type == "gnn":
+            from rf_surrogate.features import extract_features
+            surrogate.save("output/gnn_model.pt")
+            raw = archive.get_raw_samples()
+            X_arr = np.array(
+                [extract_features(s[0]) for s in raw], dtype=np.float64
+            )
+            y_arr = np.array([s[1] for s in raw], dtype=np.float64)
+            np.save("output/gnn_archive_X.npy", X_arr)
+            np.save("output/gnn_archive_y.npy", y_arr)
+            import pickle
+            with open("output/gnn_samples.pkl", "wb") as fs:
+                pickle.dump(raw, fs)
+            print(f"  GNN model & archive saved to output/  (n_samples={archive.size()})")
+        else:
+            import pickle
+            X, y = archive.get_data()
+            np.save("output/rf_archive_X.npy", X)
+            np.save("output/rf_archive_y.npy", y)
+            with open("output/rf_model.pkl", "wb") as f:
+                pickle.dump(surrogate._model, f)
+            print(f"  RF model & archive saved to output/  (n_samples={archive.size()})")
 
     history.to_json(_cfg.history_path)
     print(f"\n{history.summary()}")

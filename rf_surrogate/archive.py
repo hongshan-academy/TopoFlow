@@ -1,4 +1,4 @@
-from typing import Deque, Tuple
+from typing import Deque, List, Tuple
 
 from collections import deque
 import numpy as np
@@ -21,6 +21,9 @@ class SurrogateArchive:
             X_list.append(extract_features(chrom))
             y_list.append(fitness)
         return np.array(X_list, dtype=np.float64), np.array(y_list, dtype=np.float64)
+
+    def get_raw_samples(self) -> List[Tuple[Tuple[Edge, ...], float]]:
+        return list(self._samples)
 
     def size(self) -> int:
         return len(self._samples)

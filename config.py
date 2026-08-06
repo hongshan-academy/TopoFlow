@@ -67,24 +67,40 @@ class Config:
     # ── Solver ──
     mode: Literal['MILP', 'simulation', 'mixed'] = 'mixed'
     mixed_edge_threshold: int = 61
-    sim_max_frames: Optional[int] = 100000
+    sim_max_frames: Optional[int] = 5000
     solver_cache_size: int = 100000
     solver_threads: int = 1
-    solver_workers: int = 16
+    solver_workers: int = 20
     infeasible_throughput: float = 0.0   # 0.0 = reject all infeasible; 1.0 = allow all
 
-    # ── Surrogate RF ──
-    surrogate_enabled: bool = True
-    surrogate_top_fraction: float = 0.12
-    surrogate_random_eval_fraction: float = 0.10
+    # ── Surrogate ──
+    surrogate_type: Optional[Literal["rf", "gnn"]] = "gnn"
+    surrogate_top_fraction: float = 0.05
+    surrogate_random_eval_fraction: float = 0.00
     surrogate_warmup_samples: int = 80
     surrogate_retrain_interval: int = 5
     surrogate_n_estimators: int = 150
     surrogate_max_depth: int = 15
 
+    # ── Surrogate GNN ──
+    gnn_conv_type: Literal["GCN", "GAT"] = "GCN"
+    gnn_hidden_dim: int = 64
+    gnn_num_layers: int = 3
+    gnn_learning_rate: float = 3e-4
+    gnn_epochs: int = 200
+    gnn_batch_size: int = 256
+    gnn_early_stop_patience: int = 20
+
     # ── Output ──
     output_path: str = "output/ga_top5.json"
     history_path: str = "output/ga_history.json"
+
+    # ── Potential Net ──
+    potential_model_path: Optional[str] = "output/potential_net.pt"
+    potential_mutation_budget_base: int = 1
+    potential_mutation_budget_max_extra: int = 4
+    potential_budget_short_weight: float = 0.4
+    potential_budget_medium_weight: float = 0.6
 
 
 DEFAULT_CONFIG = Config()

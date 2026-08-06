@@ -24,7 +24,7 @@ def evaluate_cached(
     threads: int = 1,
     max_denominator: int = 10000,
     mode: Literal['MILP', 'simulation', 'mixed'] = 'MILP',
-) -> Tuple[float, int]:
+) -> Tuple[float, int, float]:
     graph = Graph.from_edges(list(edges_tuple))
     if mode == 'mixed':
         actual_mode: Literal['MILP', 'simulation'] = (
@@ -45,7 +45,7 @@ def evaluate_cached(
     p, q = target_pq
     target = Fraction(p, q)
     error = float(abs(target - frac))
-    return (error, len(graph.nodes))
+    return (error, len(graph.nodes), float(frac))
 
 def make_evaluate(
     target_pq: Tuple[int, int],
@@ -54,6 +54,6 @@ def make_evaluate(
     mode: Literal['MILP', 'simulation', 'mixed'] = 'MILP',
 ) -> Any:
     @lru_cache(maxsize=_cfg.solver_cache_size)
-    def _evaluate(edges_tuple: Tuple[Edge, ...]) -> Tuple[float, int]:
+    def _evaluate(edges_tuple: Tuple[Edge, ...]) -> Tuple[float, int, float]:
         return evaluate_cached(edges_tuple, target_pq, threads=threads, max_denominator=max_denominator, mode=mode)
     return _evaluate

@@ -15,6 +15,8 @@ dependencies = [
     "mypy>=2.3.0",
     "matplotlib>=3.11.1",
     "scikit-learn>=1.5.0",
+    "torch>=2.5.0",
+    "torch-geometric>=2.6.0",
 ]
 
 [tool.mypy]
@@ -23,6 +25,15 @@ exclude = ["\\.venv/"]
 [[tool.uv.index]]
 url = "https://mirrors.aliyun.com/pypi/simple"
 default = true
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu124" }
+
 [[tool.mypy.overrides]]
 module = ["pulp", "pulp.*"]
 ignore_missing_imports = true
@@ -34,4 +45,7 @@ module = ["matplotlib", "matplotlib.*"]
 ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = ["sklearn", "sklearn.*"]
+ignore_missing_imports = true
+[[tool.mypy.overrides]]
+module = ["torch", "torch.*", "torch_geometric", "torch_geometric.*"]
 ignore_missing_imports = true
