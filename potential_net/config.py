@@ -7,10 +7,10 @@ from typing import List, Literal
 class PotentialNetConfig:
     # ── Model ──
     conv_type: Literal["GCN", "GAT"] = "GCN"
-    hidden_dim: int = 128
-    num_layers: int = 5
+    hidden_dim: int = 64
+    num_layers: int = 3
     output_sigmoid: bool = True
-    hand_dim: int = 16
+    hand_dim: int = 0
 
     # ── Training ──
     learning_rate: float = 3e-4
@@ -20,10 +20,10 @@ class PotentialNetConfig:
     ranking_margin: float = 0.05
     head_short_weight: float = 0.4
     head_medium_weight: float = 0.6
-    reg_weight: float = 0.0
-    flow_weight: float = 1.0
+    reg_weight: float = 0.1
+    flow_weight: float = 0.0
     diff_boost: float = 30
-    diff_thresh: float = 0.0
+    diff_thresh: float = 1e-4
 
     # ── Data collection ──
     n_targets: int = 500

@@ -89,6 +89,12 @@ def main() -> None:
                         help="Regression loss type (bce for imbalanced sharp labels)")
     parser.add_argument("--flow-weight", type=float, default=1.0,
                         help="Weight for flow ratio MSE loss (0 = no flow head training)")
+    parser.add_argument("--hidden-dim", type=int, default=DEFAULT_CONFIG.hidden_dim,
+                        help="GNN hidden dimension")
+    parser.add_argument("--num-layers", type=int, default=DEFAULT_CONFIG.num_layers,
+                        help="GNN conv layers")
+    parser.add_argument("--hand-dim", type=int, default=DEFAULT_CONFIG.hand_dim,
+                        help="Hand-crafted feature dim (0 = disable)")
     parser.add_argument("--device", type=str, default="auto")
     args = parser.parse_args()
 
@@ -137,13 +143,14 @@ def main() -> None:
 
     model = PotentialNet(
         conv_type=DEFAULT_CONFIG.conv_type,
-        hidden_dim=DEFAULT_CONFIG.hidden_dim,
-        num_layers=DEFAULT_CONFIG.num_layers,
+        hidden_dim=args.hidden_dim,
+        num_layers=args.num_layers,
         learning_rate=args.lr,
         epochs=args.epochs,
         batch_size=args.batch_size,
         early_stop_patience=args.patience,
         output_sigmoid=DEFAULT_CONFIG.output_sigmoid,
+        hand_dim=args.hand_dim,
     )
 
     y_short_train = np.array([s[2] for s in train_samples], dtype=np.float64)

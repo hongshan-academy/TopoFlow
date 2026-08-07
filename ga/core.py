@@ -276,10 +276,8 @@ def _evolve(
             data_list = build_predict_batch(
                 [tuple(ind) for ind in selected], target_pq
             )
-            flow_pred, s_short, s_medium = potential_model.predict(data_list)
-            target_ratio = target_pq[0] / target_pq[1]
-            flow_score = np.exp(-np.abs(flow_pred - target_ratio) / 0.01)
-            raw_potentials = flow_score * (budget_short_weight * s_short + budget_medium_weight * s_medium)
+            _, s_short, s_medium = potential_model.predict(data_list)
+            raw_potentials = budget_short_weight * s_short + budget_medium_weight * s_medium
             p_min, p_max = raw_potentials.min(), raw_potentials.max()
             if p_max - p_min > 1e-8:
                 potentials = (raw_potentials - p_min) / (p_max - p_min)
@@ -298,9 +296,8 @@ def _evolve(
                     for _ in range(n_tries):
                         variant, = toolbox.mutate(toolbox.clone(ind))
                         v_data = build_predict_batch([tuple(variant)], target_pq)
-                        vf, vs, vm = potential_model.predict(v_data)
-                        v_flow_score = np.exp(-abs(vf[0] - target_ratio) / 0.01)
-                        v_score = v_flow_score * (budget_short_weight * vs[0] + budget_medium_weight * vm[0])
+                        _, vs, vm = potential_model.predict(v_data)
+                        v_score = budget_short_weight * vs[0] + budget_medium_weight * vm[0]
                         if v_score > best_score:
                             best_ind = variant
                             best_score = v_score
