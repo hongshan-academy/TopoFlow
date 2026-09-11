@@ -1,0 +1,1660 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flow Foundry · 分汇流布局编辑器</title>
+  <style>
+    :root {
+      --ink: #071116;
+      --panel: #0c1a20;
+      --panel-2: #10242b;
+      --line: #28434b;
+      --line-soft: rgba(90, 137, 148, .22);
+      --text: #e7f2ee;
+      --muted: #89a5a7;
+      --cyan: #53e0da;
+      --cyan-dim: #1c7778;
+      --orange: #ff9f43;
+      --blue: #4ea7ff;
+      --red: #ff6b62;
+      --green: #7bd88f;
+      --cell: 46px;
+      --gutter: 62px;
+      --shadow: 0 18px 55px rgba(0, 0, 0, .34);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      overflow: hidden;
+      color: var(--text);
+      font-family: "Bahnschrift", "DIN Alternate", "Microsoft YaHei", sans-serif;
+      background:
+        radial-gradient(circle at 20% -10%, rgba(83, 224, 218, .12), transparent 34%),
+        radial-gradient(circle at 95% 90%, rgba(255, 159, 67, .08), transparent 30%),
+        var(--ink);
+    }
+    button, input, select { font: inherit; }
+    button { color: inherit; }
+
+    .app {
+      height: 100%;
+      display: grid;
+      grid-template-rows: 70px minmax(0, 1fr) 30px;
+    }
+
+    header {
+      position: relative;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      padding: 0 22px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(7, 17, 22, .88);
+      backdrop-filter: blur(16px);
+    }
+    .brand { display: flex; align-items: center; gap: 14px; min-width: 300px; }
+    .brand-mark {
+      width: 38px; height: 38px; position: relative;
+      border: 1px solid var(--cyan-dim);
+      background: linear-gradient(135deg, rgba(83, 224, 218, .18), transparent 65%);
+      clip-path: polygon(0 0, 72% 0, 100% 28%, 100% 100%, 28% 100%, 0 72%);
+    }
+    .brand-mark::before, .brand-mark::after {
+      content: ""; position: absolute; background: var(--cyan);
+    }
+    .brand-mark::before { width: 20px; height: 2px; left: 8px; top: 17px; }
+    .brand-mark::after { width: 2px; height: 20px; left: 17px; top: 8px; }
+    .brand h1 { margin: 0; font-size: 18px; letter-spacing: .12em; font-weight: 650; }
+    .brand p { margin: 3px 0 0; color: var(--muted); font-size: 10px; letter-spacing: .18em; }
+
+    .header-actions { display: flex; align-items: center; gap: 9px; }
+    .button {
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      padding: 8px 13px;
+      background: #102129;
+      cursor: pointer;
+      transition: border-color .16s ease, background .16s ease, transform .16s ease;
+    }
+    .button:hover { border-color: var(--cyan-dim); background: #153039; transform: translateY(-1px); }
+    .button.primary { color: #041315; border-color: var(--cyan); background: var(--cyan); font-weight: 700; }
+    .button.primary:hover { background: #72eee8; }
+    .button.ghost { background: transparent; }
+    .button.small { min-height: 29px; padding: 5px 9px; font-size: 12px; }
+    .button:disabled { opacity: .4; cursor: not-allowed; transform: none; }
+
+    main {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 270px minmax(520px, 1fr) 300px;
+    }
+    aside {
+      min-height: 0;
+      overflow: auto;
+      padding: 18px;
+      background: rgba(10, 25, 31, .9);
+      scrollbar-color: var(--line) transparent;
+    }
+    aside.left { border-right: 1px solid var(--line); }
+    aside.right { border-left: 1px solid var(--line); }
+    .section { margin-bottom: 24px; }
+    .section-title {
+      display: flex; align-items: center; gap: 8px;
+      margin: 0 0 11px;
+      color: #b9d0ce;
+      font-size: 11px; font-weight: 650; letter-spacing: .17em; text-transform: uppercase;
+    }
+    .section-title::before { content: ""; width: 16px; height: 1px; background: var(--cyan); }
+    .drop-zone {
+      border: 1px dashed #35606a;
+      min-height: 116px;
+      display: grid;
+      place-items: center;
+      padding: 14px;
+      text-align: center;
+      background: linear-gradient(135deg, rgba(83, 224, 218, .06), transparent 60%);
+      cursor: pointer;
+      transition: .18s ease;
+    }
+    .drop-zone:hover, .drop-zone.dragover { border-color: var(--cyan); background-color: rgba(83, 224, 218, .08); }
+    .drop-icon { font-size: 27px; color: var(--cyan); line-height: 1; }
+    .drop-zone strong { display: block; margin-top: 8px; font-size: 13px; }
+    .drop-zone span { display: block; color: var(--muted); margin-top: 5px; font-size: 11px; line-height: 1.5; }
+
+    .source-card {
+      margin-top: 10px; padding: 10px 11px;
+      border-left: 2px solid var(--cyan);
+      background: #0a161b;
+    }
+    .source-card .name { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .source-card .meta { margin-top: 5px; color: var(--muted); font-size: 10px; }
+
+    .field { display: grid; gap: 6px; margin-bottom: 12px; }
+    .field > label { color: var(--muted); font-size: 10px; letter-spacing: .09em; text-transform: uppercase; }
+    input, select {
+      width: 100%; height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 2px;
+      padding: 0 9px;
+      color: var(--text);
+      background: #09161b;
+      outline: none;
+    }
+    input:focus, select:focus { border-color: var(--cyan-dim); box-shadow: 0 0 0 2px rgba(83, 224, 218, .08); }
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+
+    .node-kind-list { display: grid; gap: 7px; }
+    .kind-item {
+      display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 10px;
+      padding: 8px; border: 1px solid var(--line-soft); background: rgba(4, 13, 17, .42);
+    }
+    .kind-glyph {
+      width: 32px; height: 28px; display: grid; place-items: center;
+      border: 1px solid currentColor; font-size: 10px; font-weight: 800;
+    }
+    .kind-glyph.splitter { color: var(--blue); }
+    .kind-glyph.merger { color: var(--orange); }
+    .kind-glyph.entry { color: var(--green); border-radius: 50% 0 0 50%; }
+    .kind-glyph.exit { color: var(--red); border-radius: 0 50% 50% 0; }
+    .kind-name { font-size: 12px; }
+    .kind-sub { color: var(--muted); font-size: 9px; margin-top: 2px; }
+    .kind-count { color: var(--muted); font-family: Consolas, monospace; font-size: 11px; }
+
+    .stage {
+      min-width: 0; min-height: 0;
+      display: grid; grid-template-rows: 44px minmax(0, 1fr);
+      background:
+        linear-gradient(rgba(255,255,255,.018) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.018) 1px, transparent 1px),
+        #071217;
+      background-size: 22px 22px;
+    }
+    .stage-toolbar {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 0 13px; border-bottom: 1px solid var(--line); background: rgba(11, 29, 35, .8);
+    }
+    .mode-chip { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; }
+    .mode-chip i { width: 7px; height: 7px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 12px var(--cyan); }
+    .zoom-controls { display: flex; align-items: center; gap: 6px; }
+    .zoom-label { width: 48px; text-align: center; color: var(--muted); font: 11px Consolas, monospace; }
+
+    .viewport { min-height: 0; overflow: auto; display: grid; place-items: center; padding: 42px; }
+    .grid-shell {
+      position: relative; flex: none;
+      width: calc(var(--gutter) * 2 + var(--cols) * var(--cell));
+      height: calc(var(--gutter) * 2 + var(--rows) * var(--cell));
+      filter: drop-shadow(var(--shadow));
+    }
+    .grid-board {
+      position: absolute; left: var(--board-left, var(--gutter)); top: var(--board-top, var(--gutter));
+      width: calc(var(--board-cols, var(--cols)) * var(--cell));
+      height: calc(var(--board-rows, var(--rows)) * var(--cell));
+      border: 1px solid #466069;
+      background:
+        linear-gradient(to right, var(--line-soft) 1px, transparent 1px),
+        linear-gradient(to bottom, var(--line-soft) 1px, transparent 1px),
+        rgba(8, 23, 28, .92);
+      background-size: var(--cell) var(--cell);
+      box-shadow: inset 0 0 40px rgba(0, 0, 0, .28);
+    }
+    .grid-board::before {
+      content: attr(data-field-label); position: absolute; right: 8px; bottom: 6px;
+      color: rgba(83, 224, 218, .2); font-size: 9px; letter-spacing: .2em;
+    }
+    .axis { position: absolute; color: #54737a; font: 9px Consolas, monospace; pointer-events: none; }
+    .axis.col { top: 42px; width: var(--cell); text-align: center; }
+    .axis.row { left: 38px; height: var(--cell); display: grid; place-items: center; }
+    .edge-layer, .node-layer { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+    .node-layer { z-index: 3; }
+    .edge-layer { z-index: 2; }
+    .edge-path { fill: none; stroke: rgba(113, 163, 170, .54); stroke-width: 2; }
+    .edge-path.pipe { stroke: rgba(78, 167, 255, .72); stroke-width: 3; }
+    .logical-arrow-head { fill: #89adb2; }
+    .edge-path.solution-underlay {
+      stroke: #041014; stroke-width: 7; opacity: .96;
+      stroke-linecap: round; stroke-linejoin: round;
+    }
+    .edge-path.solution-route {
+      stroke: var(--cyan); stroke-width: 3;
+      stroke-linecap: round; stroke-linejoin: round;
+      filter: drop-shadow(0 0 4px rgba(83, 224, 218, .5));
+    }
+    .edge-path.solution-route.pipe { stroke-width: 3.5; stroke-dasharray: 8 4; }
+    .route-crossing { pointer-events: none; }
+    .crossing-marker {
+      fill: #061419; stroke: var(--cyan); stroke-width: 3;
+      filter: drop-shadow(0 0 3px rgba(0, 0, 0, .85));
+    }
+    .invalid-crossing-marker {
+      stroke: var(--orange); stroke-width: 3; stroke-linecap: round;
+      filter: drop-shadow(0 0 3px rgba(0, 0, 0, .85));
+    }
+
+    .facility {
+      position: absolute; width: calc(var(--cell) - 10px); height: calc(var(--cell) - 10px);
+      transform: translate(-50%, -50%);
+      display: grid; place-items: center;
+      border: 1px solid currentColor;
+      border-radius: 2px;
+      background: #0b1c22;
+      color: var(--blue);
+      box-shadow: 0 8px 18px rgba(0, 0, 0, .28);
+      pointer-events: auto;
+      cursor: default;
+    }
+    .facility.merger { color: var(--orange); }
+    .facility.splitter { color: var(--blue); }
+    .facility.preview-draggable {
+      width: clamp(22px, calc(var(--cell) * .58), 32px);
+      height: clamp(22px, calc(var(--cell) * .58), 32px);
+      cursor: grab; user-select: none; touch-action: none;
+      transition: border-color .14s ease, box-shadow .14s ease;
+    }
+    .facility.preview-draggable:hover {
+      border-color: #d9fffb;
+      box-shadow: 0 0 0 3px rgba(83, 224, 218, .12), 0 10px 22px rgba(0, 0, 0, .34);
+    }
+    .facility.preview-draggable.dragging {
+      z-index: 8; cursor: grabbing;
+      border-color: #fff;
+      box-shadow: 0 0 0 4px rgba(83, 224, 218, .18), 0 16px 30px rgba(0, 0, 0, .42);
+    }
+    .facility .code {
+      max-width: calc(100% - 2px); overflow: visible;
+      color: var(--text); text-shadow: 0 1px 2px #000;
+      font: 800 clamp(7px, calc(var(--cell) * .17), 9px)/1 Consolas, monospace;
+      letter-spacing: -.04em; white-space: nowrap;
+    }
+    .facility .rotation {
+      position: absolute; right: -5px; top: -7px; min-width: 17px; height: 15px;
+      padding: 0 3px; display: grid; place-items: center;
+      color: var(--ink); background: currentColor; font: 8px Consolas, monospace;
+    }
+    .port-arrow {
+      position: absolute; z-index: 2;
+      width: 14px; height: 14px;
+      display: grid; place-items: center;
+      color: currentColor; background: #0b1c22;
+      font: 700 11px/1 Consolas, monospace;
+      text-shadow: 0 0 5px currentColor;
+    }
+    .port-arrow.dir-0 { left: 50%; bottom: -8px; transform: translateX(-50%); }
+    .port-arrow.dir-1 { right: -8px; top: 50%; transform: translateY(-50%); }
+    .port-arrow.dir-2 { left: 50%; top: -8px; transform: translateX(-50%); }
+    .port-arrow.dir-3 { left: -8px; top: 50%; transform: translateY(-50%); }
+
+    .terminal {
+      position: absolute; z-index: 5;
+      width: 60px; height: 28px;
+      transform: translate(-50%, -50%);
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+      border: 1px solid currentColor;
+      background: #09171c;
+      font-size: 10px; font-weight: 750; letter-spacing: .08em;
+      cursor: grab; user-select: none; touch-action: none;
+      box-shadow: 0 8px 18px rgba(0,0,0,.3);
+      pointer-events: auto;
+    }
+    .terminal:active { cursor: grabbing; }
+    .terminal.in { color: var(--green); }
+    .terminal.out { color: var(--red); }
+    .terminal.selected { outline: 2px solid rgba(255,255,255,.22); outline-offset: 3px; }
+    .terminal .arrow { font-size: 13px; }
+    .terminal-guide { position: absolute; z-index: 1; background: currentColor; opacity: .3; pointer-events: none; }
+
+    .terminal-card {
+      padding: 12px; margin-bottom: 10px;
+      border: 1px solid var(--line); background: rgba(5, 16, 20, .58);
+    }
+    .terminal-card.active { border-color: var(--cyan-dim); }
+    .terminal-card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .terminal-card-head strong { font-size: 12px; }
+    .terminal-card-head span { color: var(--muted); font-size: 9px; }
+    .terminal-fields { display: grid; grid-template-columns: 1fr 72px; gap: 8px; }
+    .terminal-fields select, .terminal-fields input { height: 31px; }
+    .expansion-card {
+      margin-top: 4px; padding: 11px;
+      border: 1px solid var(--line); background: rgba(5, 16, 20, .58);
+    }
+    .toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .toggle-row[hidden], .expansion-fields[hidden] { display: none !important; }
+    .toggle-row label { font-size: 12px; font-weight: 650; }
+    .toggle-row input { width: 16px; height: 16px; accent-color: var(--cyan); }
+    .expansion-fields { display: grid; grid-template-columns: 72px 1fr 1fr; gap: 7px; margin-top: 11px; }
+    .expansion-fields input { height: 31px; }
+    .mini-label { display: block; margin: 0 0 5px; color: var(--muted); font-size: 9px; letter-spacing: .06em; }
+
+    .check-list { display: grid; gap: 7px; }
+    .check-item { display: flex; gap: 8px; color: var(--muted); font-size: 11px; line-height: 1.4; }
+    .check-item::before { content: "●"; color: var(--green); font-size: 8px; margin-top: 3px; }
+    .check-item.warn::before { color: var(--orange); }
+    .export-block { display: grid; gap: 9px; }
+    .export-block .button { width: 100%; }
+    .hint { color: var(--muted); font-size: 10px; line-height: 1.55; }
+    .command-help { position: relative; }
+    .command-tooltip {
+      position: absolute; z-index: 40; right: 0; bottom: calc(100% + 9px);
+      width: 270px; padding: 11px 12px;
+      border: 1px solid #39616a; background: #061419; box-shadow: 0 14px 38px rgba(0, 0, 0, .5);
+      opacity: 0; visibility: hidden; transform: translateY(5px);
+      pointer-events: none; transition: opacity .15s ease, transform .15s ease, visibility .15s ease;
+    }
+    .command-tooltip::after {
+      content: ""; position: absolute; right: 20px; top: 100%;
+      border: 6px solid transparent; border-top-color: #39616a;
+    }
+    .command-help:hover .command-tooltip, .command-help:focus-within .command-tooltip {
+      opacity: 1; visibility: visible; transform: translateY(0);
+    }
+    .command-tooltip strong { display: block; margin-bottom: 8px; color: var(--cyan); font-size: 10px; letter-spacing: .1em; }
+    .command-tip-row { display: grid; gap: 3px; padding: 6px 0; border-top: 1px solid var(--line-soft); }
+    .command-tip-row:first-of-type { border-top: 0; padding-top: 0; }
+    .command-tip-row span { color: var(--muted); font-size: 9px; }
+    .command-tip-row code { color: #d6ebe8; font: 9px/1.55 Consolas, monospace; white-space: normal; overflow-wrap: anywhere; }
+
+    footer {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 16px; border-top: 1px solid var(--line);
+      background: #061015; color: #5f7d82; font: 9px Consolas, monospace; letter-spacing: .08em;
+    }
+    .status-ready { color: var(--green); }
+    .toast {
+      position: fixed; left: 50%; bottom: 46px; z-index: 30;
+      transform: translate(-50%, 12px); opacity: 0;
+      padding: 10px 14px; border: 1px solid var(--cyan-dim); background: #0c2329;
+      color: var(--text); font-size: 12px; pointer-events: none; transition: .2s ease;
+    }
+    .toast.show { opacity: 1; transform: translate(-50%, 0); }
+    .paste-dialog {
+      width: min(720px, calc(100vw - 32px)); max-height: calc(100vh - 48px);
+      padding: 0; overflow: hidden;
+      color: var(--text); border: 1px solid #31555e; border-radius: 3px;
+      background: #09181e; box-shadow: 0 28px 90px rgba(0, 0, 0, .68);
+    }
+    .paste-dialog::backdrop { background: rgba(2, 9, 12, .78); backdrop-filter: blur(5px); }
+    .paste-panel { display: grid; grid-template-rows: auto minmax(180px, 1fr) auto; max-height: calc(100vh - 48px); }
+    .paste-head { padding: 18px 20px 14px; border-bottom: 1px solid var(--line); }
+    .paste-head h2 { margin: 0; font-size: 15px; letter-spacing: .08em; }
+    .paste-head p { margin: 7px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+    .paste-text {
+      width: 100%; min-height: 300px; resize: vertical;
+      padding: 16px 18px; color: #cce8e4; border: 0; border-bottom: 1px solid var(--line);
+      background: #061217; outline: none;
+      font: 12px/1.6 Consolas, "Cascadia Mono", monospace; tab-size: 2;
+    }
+    .paste-text:focus { box-shadow: inset 0 0 0 1px var(--cyan-dim); }
+    .paste-foot { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 9px; padding: 12px 14px; }
+    .paste-error { min-width: 0; color: var(--orange); font-size: 10px; line-height: 1.4; }
+
+    @media (max-width: 1100px) {
+      main { grid-template-columns: 230px minmax(480px, 1fr); }
+      aside.right { position: fixed; z-index: 20; right: 0; top: 70px; bottom: 30px; width: 290px; box-shadow: -20px 0 50px rgba(0,0,0,.35); }
+      .header-actions .hide-small { display: none; }
+    }
+    /* ── 预览模式：仅保留物理解预览画布，隐藏其余控制 UI（供主工具 iframe 复用） ── */
+    body.preview .app { grid-template-rows: 0 minmax(0, 1fr) 0 !important; }
+    body.preview header, body.preview footer { display: none !important; }
+    /* header/footer 隐藏后不占轨道，必须把 main 显式放进第 2 行，否则高度塌陷为 0 */
+    body.preview main { grid-row: 2; grid-template-columns: minmax(0, 1fr) !important; }
+    body.preview aside.left, body.preview aside.right { display: none !important; }
+    body.preview .stage { width: 100% !important; }
+  </style>
+</head>
+<body class="preview">
+<div class="app">
+  <header>
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true"></div>
+      <div><h1>FLOW FOUNDRY</h1><p>TOPOLOGY → PHYSICAL LOGISTICS</p></div>
+    </div>
+    <div class="header-actions">
+      <button class="button ghost hide-small" id="demo-btn">载入演示</button>
+      <button class="button" id="session-btn">打开 Session</button>
+      <button class="button" id="paste-btn">粘贴 JSON</button>
+      <button class="button" id="import-btn">导入 JSON</button>
+      <button class="button primary" id="export-btn">导出布局请求</button>
+      <input id="file-input" type="file" accept=".json,application/json" hidden>
+      <input id="session-folder-input" type="file" webkitdirectory multiple hidden>
+    </div>
+  </header>
+
+  <main>
+    <aside class="left">
+      <section class="section">
+        <h2 class="section-title">TopoFlow source</h2>
+        <div class="drop-zone" id="drop-zone" tabindex="0" role="button">
+          <div><div class="drop-icon">⇩</div><strong>拖入优化结果</strong><span>支持文件拖放或直接粘贴 JSON<br>以及 logistics 求解结果</span></div>
+        </div>
+        <div class="source-card"><div class="name" id="source-name">内置演示拓扑</div><div class="meta" id="source-meta">rank 1</div></div>
+      </section>
+
+      <section class="section">
+        <h2 class="section-title">Candidate</h2>
+        <div class="field"><label for="rank-select">优化结果排名</label><select id="rank-select"></select></div>
+      </section>
+
+      <section class="section">
+        <h2 class="section-title">Visible components</h2>
+        <div class="node-kind-list">
+          <div class="kind-item"><div class="kind-glyph splitter">S2</div><div><div class="kind-name">二路分流器</div><div class="kind-sub">映射三出口设施</div></div><div class="kind-count" id="count-s2">0</div></div>
+          <div class="kind-item"><div class="kind-glyph splitter">S3</div><div><div class="kind-name">三路分流器</div><div class="kind-sub">一入三出</div></div><div class="kind-count" id="count-s3">0</div></div>
+          <div class="kind-item"><div class="kind-glyph merger">C2</div><div><div class="kind-name">二路汇流器</div><div class="kind-sub">映射三入口设施</div></div><div class="kind-count" id="count-c2">0</div></div>
+          <div class="kind-item"><div class="kind-glyph merger">C3</div><div><div class="kind-name">三路汇流器</div><div class="kind-sub">三入一出</div></div><div class="kind-count" id="count-c3">0</div></div>
+          <div class="kind-item"><div class="kind-glyph entry">IN</div><div><div class="kind-name">入口</div><div class="kind-sub">可拖动边界终端</div></div><div class="kind-count">1</div></div>
+          <div class="kind-item"><div class="kind-glyph exit">OUT</div><div><div class="kind-name">出口</div><div class="kind-sub">可拖动边界终端</div></div><div class="kind-count">1</div></div>
+        </div>
+      </section>
+    </aside>
+
+    <section class="stage">
+      <div class="stage-toolbar">
+        <div class="mode-chip"><i></i><span id="mode-label">逻辑拓扑预览 · 拖动 IN / OUT 设置边界</span></div>
+        <div class="zoom-controls">
+          <button class="button small" id="review-design-btn" hidden>查看原设计</button>
+          <button class="button small" id="zoom-out" aria-label="缩小">−</button>
+          <span class="zoom-label" id="zoom-label">100%</span>
+          <button class="button small" id="zoom-in" aria-label="放大">＋</button>
+        </div>
+      </div>
+      <div class="viewport" id="viewport">
+        <div class="grid-shell" id="grid-shell" style="--rows:12;--cols:12;--board-rows:12;--board-cols:12;--board-left:62px;--board-top:62px;--cell:46px">
+          <div class="grid-board" id="grid-board"></div>
+          <svg class="edge-layer" id="edge-layer" aria-hidden="true"></svg>
+          <div class="node-layer" id="node-layer"></div>
+        </div>
+      </div>
+    </section>
+
+    <aside class="right">
+      <section class="section">
+        <h2 class="section-title">Layout settings</h2>
+        <div class="field"><label for="project-name">任务名称</label><input id="project-name" value="topoflow-layout"></div>
+        <div class="field-row">
+          <div class="field"><label for="rows-input" id="rows-label">最大行 Rows</label><input id="rows-input" type="number" min="3" max="40" value="20"></div>
+          <div class="field"><label for="cols-input" id="cols-label">最大列 Columns</label><input id="cols-input" type="number" min="3" max="40" value="20"></div>
+        </div>
+        <div class="field"><label for="transport-select">运输类型</label><select id="transport-select"><option value="belt">传送带 Belt</option><option value="pipe">管道 Pipe</option></select></div>
+        <div class="field">
+          <label for="input-pattern-input">输入节拍 Input pattern</label>
+          <input id="input-pattern-input" type="text" value="1" inputmode="numeric" pattern="[01]+" spellcheck="false" placeholder="例如 1 或 1000">
+          <p class="hint" style="margin:6px 0 0">周期循环；1 表示本帧提供物料，0 表示不提供。默认 1 为连续供料，1000 的输入率为 1/4。</p>
+        </div>
+        <div class="expansion-card">
+          <div class="field" style="margin-bottom:10px"><label for="sizing-mode-select">尺寸模式</label><select id="sizing-mode-select"><option value="compact">自动紧凑（默认）</option><option value="fixed">固定尺寸 / 顺序扩网</option></select></div>
+          <div class="field" id="compact-candidates-field" style="margin-bottom:10px"><label for="compact-candidates-input">最多紧凑候选数</label><input id="compact-candidates-input" type="number" min="1" max="20" value="6"></div>
+          <div class="toggle-row" id="auto-expand-row"><label for="auto-expand-input">网格不足时自动扩大</label><input id="auto-expand-input" type="checkbox" checked></div>
+          <div class="expansion-fields" id="expansion-fields">
+            <div><span class="mini-label">步长</span><input id="expand-step-input" type="number" min="1" max="8" value="1"></div>
+            <div><span class="mini-label">最大行</span><input id="max-rows-input" type="number" min="3" max="40" value="20"></div>
+            <div><span class="mini-label">最大列</span><input id="max-cols-input" type="number" min="3" max="40" value="20"></div>
+          </div>
+          <p class="hint" style="margin:9px 0 0">自动紧凑只需要上方的最大允许尺寸；固定模式开启自动扩网后，才显示步长和扩网最大值。</p>
+        </div>
+        <div class="expansion-card">
+          <div class="toggle-row"><label for="min-splitter-merger-belt-input">分流 → 汇流皮带至少 1 格</label><input id="min-splitter-merger-belt-input" type="checkbox"></div>
+          <p class="hint" style="margin:9px 0 0">开启后，S2/S3 到 C2/C3 的皮带必须经过至少一个普通格，设施不能直接相邻；仅对传送带生效。</p>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2 class="section-title">Boundary terminals</h2>
+        <div class="terminal-card active" data-terminal-card="In">
+          <div class="terminal-card-head"><strong style="color:var(--green)">IN · 入口</strong><span>连接 TopoFlow In</span></div>
+          <div class="terminal-fields"><select data-side="In"><option value="left">左侧</option><option value="right">右侧</option><option value="top">上侧</option><option value="bottom">下侧</option></select><input data-offset="In" type="number" min="1" value="4" title="边界位置编号（从 1 开始）"></div>
+        </div>
+        <div class="terminal-card" data-terminal-card="Out">
+          <div class="terminal-card-head"><strong style="color:var(--red)">OUT · 出口</strong><span>连接 TopoFlow Out</span></div>
+          <div class="terminal-fields"><select data-side="Out"><option value="right">右侧</option><option value="left">左侧</option><option value="top">上侧</option><option value="bottom">下侧</option></select><input data-offset="Out" type="number" min="1" value="9" title="边界位置编号（从 1 开始）"></div>
+        </div>
+        <p class="hint">可直接拖动网格边缘的 IN / OUT。边界位置和朝外方向会作为 CP-SAT 硬约束。</p>
+      </section>
+
+      <section class="section">
+        <h2 class="section-title">Preflight</h2>
+        <div class="check-list" id="check-list"></div>
+      </section>
+
+      <section class="section export-block">
+        <button class="button primary" id="export-side-btn">下载 .layout.json</button>
+        <div class="command-help">
+          <button class="button" id="copy-command-btn" aria-describedby="command-params-tip">复制总控台命令</button>
+          <div class="command-tooltip" id="command-params-tip" role="tooltip">
+            <strong>交互式总控台</strong>
+            <div class="command-tip-row"><span>启动</span><code>python cli.py</code></div>
+            <div class="command-tip-row"><span>会话</span><code>每个会话独立保存输入、候选、物理解和验证报告</code></div>
+            <div class="command-tip-row"><span>导入</span><code>启动后选择“导入 GA 结果或布局请求”</code></div>
+          </div>
+        </div>
+        <p class="hint">导出后运行完整工作流，生成的 solution.json 可再次拖回本页预览。</p>
+      </section>
+    </aside>
+  </main>
+
+  <footer><span id="footer-state" class="status-ready">● READY</span><span>schema: topoflow-logistics-layout/v1</span><span id="graph-stats">0 nodes / 0 edges</span></footer>
+</div>
+<dialog class="paste-dialog" id="paste-dialog" aria-labelledby="paste-title">
+  <div class="paste-panel">
+    <div class="paste-head">
+      <h2 id="paste-title">粘贴网络图 JSON</h2>
+      <p>支持 Top 5 数组、单个候选、裸 graph、布局请求和 solution。粘贴后按 Ctrl+Enter 可直接载入。</p>
+    </div>
+    <textarea class="paste-text" id="paste-text" spellcheck="false" aria-label="网络图 JSON 文本" placeholder='例如：{"nodes":["In","S2_0","C2_0","Out"],"edges":[["In","S2_0"],["S2_0","C2_0"],["S2_0","C2_0"],["C2_0","Out"]]}'></textarea>
+    <div class="paste-foot">
+      <div class="paste-error" id="paste-error" role="alert"></div>
+      <button class="button ghost" id="paste-cancel-btn" type="button">取消</button>
+      <button class="button primary" id="paste-load-btn" type="button">解析并载入</button>
+    </div>
+  </div>
+</dialog>
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+  "use strict";
+  const SCHEMA = "topoflow-logistics-layout/v1";
+  const STORAGE_KEY = "topoflow-logistics-editor-v1";
+  const SETTINGS_VERSION = 4;
+  const GUTTER = 62;
+  const SIDES = ["left", "right", "top", "bottom"];
+  const DEMO = [{
+    rank: 1, error: 0, nodes: 4,
+    graph: {
+      nodes: ["In", "S2_0", "C2_0", "Out"],
+      edges: [["In", "S2_0"], ["S2_0", "C2_0"], ["S2_0", "C2_0"], ["C2_0", "Out"]]
+    }
+  }];
+
+  const state = {
+    sourceName: "内置演示拓扑", results: DEMO, rank: 1, selected: DEMO[0], graph: DEMO[0].graph,
+    rows: 12, columns: 12, cell: 46, transport: "belt", inputPattern: "1", name: "topoflow-layout",
+    expansion: { sizingMode: "compact", compactCandidates: 6, enabled: true, step: 1, maxRows: 20, maxColumns: 20 },
+    constraints: { requireSplitterMergerBeltCell: false },
+    terminals: { In: { side: "left", offset: 3 }, Out: { side: "right", offset: 8 } },
+    selectedTerminal: "In", solution: null, originalDesign: null, viewMode: "design",
+    previewPositions: {}, issues: []
+  };
+
+  const $ = (selector) => document.querySelector(selector);
+  const $$ = (selector) => [...document.querySelectorAll(selector)];
+  const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+  const deepCopy = (value) => JSON.parse(JSON.stringify(value));
+  const isSolutionView = () => !!state.solution && state.viewMode === "solution";
+  let toastTimer = null;
+  let dragTerminal = null;
+  let dragFacility = null;
+
+  function toast(message) {
+    const node = $("#toast");
+    node.textContent = message;
+    node.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => node.classList.remove("show"), 2200);
+  }
+
+  function saveSettings() {
+    const payload = {
+      version: SETTINGS_VERSION,
+      rows: state.rows, columns: state.columns, cell: state.cell, transport: state.transport, inputPattern: state.inputPattern,
+      name: state.name, terminals: state.terminals, expansion: state.expansion, constraints: state.constraints
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  }
+
+  function restoreSettings() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+      if (!saved) return;
+      const savedVersion = Number(saved.version || 1);
+      const migrateExpansionDefaults = savedVersion < 2;
+      const needsMigration = savedVersion < SETTINGS_VERSION;
+      state.rows = clamp(Number(saved.rows) || 12, 3, 30);
+      state.columns = clamp(Number(saved.columns) || 12, 3, 30);
+      state.cell = clamp(Number(saved.cell) || 46, 28, 68);
+      state.transport = saved.transport === "pipe" ? "pipe" : "belt";
+      state.inputPattern = typeof saved.inputPattern === "string" && /^[01]+$/.test(saved.inputPattern.trim()) ? saved.inputPattern.trim() : "1";
+      state.name = typeof saved.name === "string" ? saved.name : state.name;
+      if (saved.terminals) state.terminals = saved.terminals;
+      if (saved.expansion) state.expansion = saved.expansion;
+      if (saved.constraints) state.constraints.requireSplitterMergerBeltCell = saved.constraints.requireSplitterMergerBeltCell === true;
+      if (migrateExpansionDefaults && Number(state.expansion.step) === 2) state.expansion.step = 1;
+      normalizeExpansion();
+      normalizeTerminal("In"); normalizeTerminal("Out");
+      if (needsMigration) saveSettings();
+    } catch (_) { /* ignore invalid local settings */ }
+  }
+
+  function normalizeGraph(graph) {
+    if (!graph || typeof graph !== "object" || !Array.isArray(graph.edges)) throw new Error("缺少 graph.edges");
+    if (Array.isArray(graph.nodes)) return graph;
+    if (!Number.isInteger(graph.nodes) || graph.nodes < 1) throw new Error("graph.nodes 必须是正整数或非空数组");
+
+    const nodes = []; const seen = new Set();
+    const edges = graph.edges.map((edge, index) => {
+      if (!Array.isArray(edge) || edge.length !== 2 || typeof edge[0] !== "string" || typeof edge[1] !== "string") {
+        throw new Error(`graph.edges[${index}] 必须是两个字符串组成的 [source, target]`);
+      }
+      const source = edge[0].trim(); const target = edge[1].trim();
+      if (!source || !target) throw new Error(`graph.edges[${index}] 的节点 ID 不能为空`);
+      if (source === target) throw new Error(`graph.edges[${index}] 不能是自环 ${source}`);
+      for (const node of [source, target]) if (!seen.has(node)) { seen.add(node); nodes.push(node); }
+      return [source, target];
+    });
+    if (!edges.length) throw new Error("graph.edges 不能为空");
+    if (graph.nodes !== nodes.length) throw new Error(`graph.nodes 声明 ${graph.nodes}，但边中实际有 ${nodes.length} 个唯一节点`);
+    for (const [field, actual] of [["verified_nodes", nodes.length], ["edges_count", edges.length]]) {
+      if (!(field in graph)) continue;
+      if (!Number.isInteger(graph[field])) throw new Error(`graph.${field} 必须是整数`);
+      if (graph[field] !== actual) throw new Error(`graph.${field} 声明 ${graph[field]}，但实际数量为 ${actual}`);
+    }
+    return { ...graph, nodes, edges };
+  }
+
+  function selectedResultFrom(input, requestedRank = null) {
+    const list = Array.isArray(input) ? input : [input];
+    if (!list.length || list.some(item => !item || typeof item !== "object")) throw new Error("结果列表为空或格式错误");
+    const rank = requestedRank ?? state.rank;
+    const exact = list.find(item => Number(item.rank) === Number(rank));
+    const selected = exact || list[clamp(Number(rank) - 1, 0, list.length - 1)] || list[0];
+    const graph = normalizeGraph(selected.graph || selected);
+    if (!Array.isArray(graph.nodes) || !graph.nodes.length) throw new Error("graph.nodes 不能为空");
+    return { list, selected, graph };
+  }
+
+  function designFromSolution(solution) {
+    const topoflow = solution.topoflow || {};
+    if (topoflow.original_design) return deepCopy(topoflow.original_design);
+    const search = topoflow.grid_search || {};
+    return {
+      schema: SCHEMA,
+      name: solution.problem?.name || "topoflow-layout",
+      rank: topoflow.selection?.rank || 1,
+      grid: deepCopy(search.initialGrid || { rows: solution.n, columns: solution.m }),
+      transport: topoflow.transport || "belt",
+      simulation: deepCopy(topoflow.simulation || {
+        inputPattern: topoflow.discrete_analysis?.inputPattern || topoflow.physical_flow_verification?.inputPattern || "1"
+      }),
+      constraints: deepCopy(topoflow.constraints || { requireSplitterMergerBeltCell: false }),
+      terminals: deepCopy(topoflow.terminals || {}),
+      searchExpansion: {
+        enabled: !!search.enabled,
+        step: search.step || 1,
+        maxRows: search.maxRows || solution.n,
+        maxColumns: search.maxColumns || solution.m,
+        sizingMode: search.mode || "compact",
+        compactCandidates: search.candidateLimit || 6
+      },
+      topoflow: { ...(topoflow.selection || {}), graph: deepCopy(topoflow.graph) }
+    };
+  }
+
+  function switchSolutionView() {
+    if (!state.solution) return;
+    if (isSolutionView()) {
+      const design = state.originalDesign || designFromSolution(state.solution);
+      const parsed = selectedResultFrom(design.topoflow, design.rank || 1);
+      state.viewMode = "design";
+      state.rows = Number(design.grid?.rows) || state.rows;
+      state.columns = Number(design.grid?.columns) || state.columns;
+      state.transport = design.transport === "pipe" ? "pipe" : "belt";
+      state.inputPattern = typeof design.simulation?.inputPattern === "string" ? design.simulation.inputPattern : "1";
+      state.constraints.requireSplitterMergerBeltCell = design.constraints?.requireSplitterMergerBeltCell === true;
+      state.selected = parsed.selected; state.results = parsed.list; state.graph = parsed.graph;
+      state.rank = Number(design.rank || parsed.selected.rank || 1);
+      if (design.terminals?.In && design.terminals?.Out) state.terminals = deepCopy(design.terminals);
+      if (design.searchExpansion) {
+        state.expansion = {
+          sizingMode: design.searchExpansion.sizingMode || "compact",
+          compactCandidates: Number(design.searchExpansion.compactCandidates) || 6,
+          enabled: design.searchExpansion.enabled !== false,
+          step: Number(design.searchExpansion.step) || 1,
+          maxRows: Number(design.searchExpansion.maxRows) || state.rows,
+          maxColumns: Number(design.searchExpansion.maxColumns) || state.columns
+        };
+      }
+      toast("正在回看原设计方案");
+    } else {
+      const topoflow = state.solution.topoflow;
+      state.viewMode = "solution";
+      state.rows = Number(state.solution.n) || state.rows;
+      state.columns = Number(state.solution.m) || state.columns;
+      state.transport = topoflow.transport || state.transport;
+      state.inputPattern = typeof topoflow.simulation?.inputPattern === "string"
+        ? topoflow.simulation.inputPattern
+        : (topoflow.discrete_analysis?.inputPattern || "1");
+      state.constraints.requireSplitterMergerBeltCell = topoflow.constraints?.requireSplitterMergerBeltCell === true;
+      state.graph = topoflow.graph;
+      state.selected = { rank: topoflow.selection?.rank || 1, graph: state.graph, ...(topoflow.selection || {}) };
+      state.results = [state.selected]; state.rank = Number(state.selected.rank || 1);
+      if (topoflow.terminals?.In && topoflow.terminals?.Out) state.terminals = deepCopy(topoflow.terminals);
+      const search = topoflow.grid_search;
+      if (search) state.expansion = { sizingMode: search.mode || "compact", compactCandidates: search.candidateLimit || 6, enabled: !!search.enabled, step: search.step || 1, maxRows: search.maxRows || search.maximumGrid?.rows || state.rows, maxColumns: search.maxColumns || search.maximumGrid?.columns || state.columns };
+      toast("已返回物理解");
+    }
+    normalizeTerminal("In"); normalizeTerminal("Out"); normalizeExpansion(); syncControls(); renderAll();
+  }
+
+  function loadObject(object, fileName = "导入数据") {
+    if (object && object.schema === SCHEMA) {
+      const grid = object.grid || {};
+      state.rows = clamp(Number(grid.rows) || 12, 3, 30);
+      state.columns = clamp(Number(grid.columns) || 12, 3, 30);
+      state.transport = object.transport === "pipe" ? "pipe" : "belt";
+      const requestPattern = object.simulation?.inputPattern ?? "1";
+      if (typeof requestPattern !== "string" || !/^[01]+$/.test(requestPattern.trim())) throw new Error("simulation.inputPattern 必须是非空 0/1 位串");
+      state.inputPattern = requestPattern.trim();
+      state.constraints.requireSplitterMergerBeltCell = object.constraints?.requireSplitterMergerBeltCell === true;
+      if (object.searchExpansion) {
+        state.expansion = {
+          sizingMode: object.searchExpansion.sizingMode || "compact",
+          compactCandidates: Number(object.searchExpansion.compactCandidates) || 6,
+          enabled: object.searchExpansion.enabled !== false,
+          step: Number(object.searchExpansion.step) || 1,
+          maxRows: Number(object.searchExpansion.maxRows) || state.rows,
+          maxColumns: Number(object.searchExpansion.maxColumns) || state.columns
+        };
+      }
+      state.name = object.name || "topoflow-layout";
+      if (object.terminals) state.terminals = deepCopy(object.terminals);
+      const parsed = selectedResultFrom(object.topoflow, object.rank || 1);
+      state.results = parsed.list; state.selected = parsed.selected; state.graph = parsed.graph;
+      state.rank = Number(object.rank || parsed.selected.rank || 1); state.solution = null; state.originalDesign = null; state.viewMode = "design"; state.previewPositions = {};
+      state.sourceName = fileName; normalizeTerminal("In"); normalizeTerminal("Out"); normalizeExpansion();
+      toast("已恢复布局请求");
+    } else if (object && object.schema === "topoflow-discrete-analysis/v1") {
+      const graph = normalizeGraph(object.graph);
+      const selection = object.selection && typeof object.selection === "object" ? object.selection : {};
+      const ratioMatch = String(selection.targetRatio || "").match(/^\s*(\d+)\s*\/\s*(\d+)\s*$/);
+      const selected = {
+        ...selection,
+        rank: Number(selection.gaRank) || 1,
+        graph,
+        discrete_analysis: object.discrete_analysis
+      };
+      if (ratioMatch && Number(ratioMatch[2])) selected.target = { p: Number(ratioMatch[1]), q: Number(ratioMatch[2]) };
+      state.results = [selected]; state.selected = selected; state.graph = graph;
+      state.rank = selected.rank; state.solution = null; state.originalDesign = null; state.viewMode = "design"; state.previewPositions = {};
+      state.sourceName = fileName;
+      toast("已载入离散分析结果");
+    } else if (object && Array.isArray(object.machs) && Array.isArray(object.belts) && object.topoflow) {
+      state.solution = object;
+      state.originalDesign = designFromSolution(object); state.viewMode = "solution"; state.previewPositions = {};
+      state.graph = object.topoflow.graph;
+      state.selected = { rank: object.topoflow.selection?.rank || 1, graph: state.graph, ...(object.topoflow.selection || {}) };
+      state.results = [state.selected]; state.rank = Number(state.selected.rank || 1);
+      state.rows = Number(object.n) || state.rows; state.columns = Number(object.m) || state.columns;
+      state.transport = object.topoflow.transport || state.transport;
+      state.inputPattern = typeof object.topoflow.simulation?.inputPattern === "string"
+        ? object.topoflow.simulation.inputPattern
+        : (object.topoflow.discrete_analysis?.inputPattern || "1");
+      state.constraints.requireSplitterMergerBeltCell = object.topoflow.constraints?.requireSplitterMergerBeltCell === true;
+      if (object.topoflow.grid_search) {
+        const search = object.topoflow.grid_search;
+        state.expansion = { sizingMode: search.mode || "compact", compactCandidates: search.candidateLimit || 6, enabled: !!search.enabled, step: search.step || 1, maxRows: search.maxRows || search.maximumGrid?.rows || state.rows, maxColumns: search.maxColumns || search.maximumGrid?.columns || state.columns };
+      }
+      if (object.topoflow.terminals && Object.keys(object.topoflow.terminals).length) state.terminals = deepCopy(object.topoflow.terminals);
+      state.sourceName = fileName; normalizeTerminal("In"); normalizeTerminal("Out"); normalizeExpansion();
+      toast("已载入物理解预览");
+    } else {
+      const parsed = selectedResultFrom(object, 1);
+      state.results = parsed.list; state.selected = parsed.selected; state.graph = parsed.graph;
+      state.rank = Number(parsed.selected.rank || 1); state.solution = null; state.originalDesign = null; state.viewMode = "design"; state.previewPositions = {}; state.sourceName = fileName;
+      toast("已载入 TopoFlow 结果");
+    }
+    syncControls(); saveSettings(); renderAll();
+  }
+
+  function validateGraph() {
+    const issues = [];
+    const graph = state.graph || {};
+    const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
+    const edges = Array.isArray(graph.edges) ? graph.edges : [];
+    const set = new Set(nodes);
+    if (!set.has("In") || !set.has("Out")) issues.push("必须包含 In 和 Out");
+    if (set.size !== nodes.length) issues.push("节点 ID 存在重复");
+    for (const [index, edge] of edges.entries()) {
+      if (!Array.isArray(edge) || edge.length !== 2 || !set.has(edge[0]) || !set.has(edge[1])) issues.push(`边 #${index + 1} 引用了未知节点`);
+    }
+    for (const node of nodes) {
+      if (node !== "In" && node !== "Out" && !/^(S2|S3|C2|C3)_\d+(?:__\d+)?$/.test(node)) issues.push(`不支持节点 ${node}`);
+    }
+    if (state.terminals.In.side === state.terminals.Out.side && state.terminals.In.offset === state.terminals.Out.offset) issues.push("入口和出口不能占用同一边界格");
+    if (!/^[01]+$/.test(String(state.inputPattern || "").trim())) issues.push("输入节拍必须是非空 0/1 位串，例如 1 或 1000");
+    if (state.expansion.sizingMode === "fixed" && (state.expansion.maxRows < state.rows || state.expansion.maxColumns < state.columns)) issues.push("扩网最大尺寸不能小于初始网格");
+    state.issues = [...new Set(issues)];
+  }
+
+  function terminalLimit(terminal) {
+    const side = state.terminals[terminal].side;
+    return side === "left" || side === "right" ? state.rows : state.columns;
+  }
+
+  function normalizeTerminal(terminal) {
+    const anchor = state.terminals[terminal] || { side: terminal === "In" ? "left" : "right", offset: 0 };
+    if (!SIDES.includes(anchor.side)) anchor.side = terminal === "In" ? "left" : "right";
+    anchor.offset = clamp(Number(anchor.offset) || 0, 0, terminalLimitForSide(anchor.side) - 1);
+    state.terminals[terminal] = anchor;
+  }
+
+  function terminalLimitForSide(side) {
+    return side === "left" || side === "right" ? state.rows : state.columns;
+  }
+
+  function normalizeExpansion() {
+    const value = state.expansion || {};
+    value.sizingMode = value.sizingMode === "fixed" ? "fixed" : "compact";
+    value.compactCandidates = clamp(Number(value.compactCandidates) || 6, 1, 20);
+    value.enabled = value.enabled !== false;
+    value.step = clamp(Number(value.step) || 1, 1, 8);
+    if (value.sizingMode === "compact") {
+      value.maxRows = clamp(Number(value.maxRows) || state.rows, 3, 40);
+      value.maxColumns = clamp(Number(value.maxColumns) || state.columns, 3, 40);
+      if (!isSolutionView()) {
+        state.rows = value.maxRows;
+        state.columns = value.maxColumns;
+      }
+    } else {
+      value.maxRows = clamp(Number(value.maxRows) || state.rows, state.rows, 40);
+      value.maxColumns = clamp(Number(value.maxColumns) || state.columns, state.columns, 40);
+    }
+    state.expansion = value;
+    normalizeTerminal("In"); normalizeTerminal("Out");
+  }
+
+  function logicalLayout() {
+    const nodes = state.graph.nodes.filter(node => node !== "In" && node !== "Out");
+    const incoming = Object.fromEntries(state.graph.nodes.map(node => [node, 0]));
+    const adjacency = Object.fromEntries(state.graph.nodes.map(node => [node, []]));
+    for (const [from, to] of state.graph.edges) { if (adjacency[from]) adjacency[from].push(to); if (to in incoming) incoming[to] += 1; }
+    const depth = { In: 0 };
+    const queue = ["In"];
+    const processed = new Set();
+    while (queue.length) {
+      const node = queue.shift();
+      processed.add(node);
+      for (const target of adjacency[node] || []) {
+        depth[target] = Math.max(depth[target] || 0, (depth[node] || 0) + 1);
+        incoming[target] -= 1;
+        if (incoming[target] === 0) queue.push(target);
+      }
+    }
+    const reachableDepth = { In: 0 };
+    const pending = ["In"];
+    while (pending.length) {
+      const node = pending.shift();
+      for (const target of adjacency[node] || []) {
+        if (target in reachableDepth) continue;
+        reachableDepth[target] = reachableDepth[node] + 1;
+        pending.push(target);
+      }
+    }
+    const layoutDepth = Object.fromEntries(nodes.map(node => [
+      node,
+      processed.has(node) ? (depth[node] || 1) : (reachableDepth[node] || 1)
+    ]));
+    const maxDepth = Math.max(1, ...nodes.map(node => layoutDepth[node]));
+    const layers = {};
+    for (const node of nodes) (layers[layoutDepth[node]] ||= []).push(node);
+    return { nodes, layers, maxDepth };
+  }
+
+  function previewDimensions(layout = null) {
+    if (isSolutionView()) return { rows: state.rows, columns: state.columns, expanded: false };
+    const analysis = layout || logicalLayout();
+    const maxLayerSize = Math.max(1, ...Object.values(analysis.layers).map(layer => layer.length));
+    const rows = Math.max(state.rows, maxLayerSize + 2);
+    const columns = Math.max(state.columns, analysis.maxDepth + 2);
+    return { rows, columns, expanded: rows > state.rows || columns > state.columns };
+  }
+
+  function boardOffset(dimensions = null) {
+    const display = dimensions || previewDimensions();
+    return {
+      row: Math.floor((display.rows - state.rows) / 2),
+      column: Math.floor((display.columns - state.columns) / 2)
+    };
+  }
+
+  function logicalPositions(layout = null, dimensions = null) {
+    if (isSolutionView()) {
+      const positions = {};
+      for (const machine of state.solution.machs || []) {
+        const node = machine.topoflow_node_id;
+        if (node) positions[node] = { row: machine.pos[0], column: machine.pos[1], rotation: machine.rot || 0 };
+      }
+      return positions;
+    }
+    const analysis = layout || logicalLayout();
+    const display = dimensions || previewDimensions(analysis);
+    const result = {};
+    for (const [rawDepth, layer] of Object.entries(analysis.layers)) {
+      const d = Number(rawDepth);
+      const column = clamp(Math.round((d / Math.max(1, analysis.maxDepth + 1)) * (display.columns - 1)), 1, display.columns - 2);
+      layer.forEach((node, index) => {
+        const row = clamp(Math.round(((index + 1) / (layer.length + 1)) * (display.rows - 1)), 0, display.rows - 1);
+        result[node] = { row, column, rotation: 0 };
+      });
+    }
+    for (const [node, position] of Object.entries(state.previewPositions)) {
+      if (!result[node]) continue;
+      result[node] = {
+        ...result[node],
+        row: clamp(Number(position.row), 0, display.rows - 1),
+        column: clamp(Number(position.column), 0, display.columns - 1)
+      };
+    }
+    return result;
+  }
+
+  function cellCenter(row, column) {
+    return { x: GUTTER + column * state.cell + state.cell / 2, y: GUTTER + row * state.cell + state.cell / 2 };
+  }
+
+  function terminalCenter(terminal) {
+    const { side, offset } = state.terminals[terminal];
+    const display = previewDimensions();
+    const origin = boardOffset(display);
+    const left = GUTTER + origin.column * state.cell;
+    const top = GUTTER + origin.row * state.cell;
+    if (side === "left") return { x: left - 32, y: top + offset * state.cell + state.cell / 2 };
+    if (side === "right") return { x: left + state.columns * state.cell + 32, y: top + offset * state.cell + state.cell / 2 };
+    if (side === "top") return { x: left + offset * state.cell + state.cell / 2, y: top - 30 };
+    return { x: left + offset * state.cell + state.cell / 2, y: top + state.rows * state.cell + 30 };
+  }
+
+  function renderAxes(dimensions) {
+    const layer = $("#node-layer");
+    const origin = boardOffset(dimensions);
+    const left = GUTTER + origin.column * state.cell;
+    const top = GUTTER + origin.row * state.cell;
+    for (let column = 0; column < state.columns; column++) {
+      const axis = document.createElement("div"); axis.className = "axis col"; axis.textContent = column + 1;
+      axis.style.left = `${left + column * state.cell}px`; axis.style.top = `${top - 20}px`; layer.appendChild(axis);
+    }
+    for (let row = 0; row < state.rows; row++) {
+      const axis = document.createElement("div"); axis.className = "axis row"; axis.textContent = row + 1;
+      axis.style.left = `${left - 24}px`; axis.style.top = `${top + row * state.cell}px`; layer.appendChild(axis);
+    }
+  }
+
+  function renderFacilities(positions) {
+    const layer = $("#node-layer");
+    const outwardArrows = ["↓", "→", "↑", "←"];
+    const inferredFamily = node => {
+      const explicit = state.graph?.nodeTypes?.[node];
+      if (explicit) return explicit;
+      if (state.graph?.inferNodeTypesFromDegrees) {
+        let incoming = 0; let outgoing = 0;
+        for (const [source, target] of state.graph.edges || []) {
+          if (source === node) outgoing += 1;
+          if (target === node) incoming += 1;
+        }
+        return ({ "1,2": "S2", "1,3": "S3", "2,1": "C2", "3,1": "C3" })[`${incoming},${outgoing}`];
+      }
+      return null;
+    };
+    const fallbackPorts = family => family.startsWith("S")
+      ? [{ kind: 1, dir: 2 }, { kind: -1, dir: 0 }, { kind: -1, dir: 1 }, { kind: -1, dir: 3 }]
+      : [{ kind: 1, dir: 0 }, { kind: 1, dir: 1 }, { kind: 1, dir: 3 }, { kind: -1, dir: 2 }];
+    for (const [node, position] of Object.entries(positions)) {
+      const machine = isSolutionView() ? (state.solution.machs || []).find(item => item.topoflow_node_id === node) : null;
+      const family = machine?.topoflow_node_type || inferredFamily(node) || node.split("_")[0];
+      const splitter = family.startsWith("S");
+      const center = cellCenter(position.row, position.column);
+      const ports = isSolutionView()
+        ? (machine?.ports?.length ? machine.ports : fallbackPorts(family))
+        : [];
+      const arrows = ports.map(port => {
+        const direction = Number(port.dir); const output = Number(port.kind) < 0;
+        const flowDirection = output ? direction : (direction + 2) % 4;
+        const role = output ? "输出" : "输入";
+        return `<span class="port-arrow dir-${direction} ${output ? "output" : "input"}" data-port-dir="${direction}" data-port-role="${output ? "output" : "input"}" title="${role}端口 · ${outwardArrows[flowDirection]}">${outwardArrows[flowDirection]}</span>`;
+      }).join("");
+      const element = document.createElement("div");
+      element.className = `facility ${splitter ? "splitter" : "merger"}${isSolutionView() ? "" : " preview-draggable"}`;
+      element.dataset.nodeId = node;
+      element.style.left = `${center.x}px`; element.style.top = `${center.y}px`;
+      element.title = `${node} · ${splitter ? "分流器" : "汇流器"}`;
+      element.innerHTML = `<span class="code">${escapeHtml(node)}</span>${isSolutionView() ? `<span class="rotation">${position.rotation * 90}°</span>` : ""}${arrows}`;
+      if (!isSolutionView()) element.addEventListener("pointerdown", startFacilityDrag);
+      layer.appendChild(element);
+    }
+  }
+
+  function renderTerminals() {
+    const layer = $("#node-layer");
+    for (const terminal of ["In", "Out"]) {
+      const center = terminalCenter(terminal);
+      const element = document.createElement("div");
+      element.className = `terminal ${terminal === "In" ? "in" : "out"}${state.selectedTerminal === terminal ? " selected" : ""}`;
+      element.dataset.terminal = terminal; element.style.left = `${center.x}px`; element.style.top = `${center.y}px`;
+      element.innerHTML = isSolutionView()
+        ? (terminal === "In" ? `<span class="arrow">→</span> IN` : `OUT <span class="arrow">→</span>`)
+        : terminal.toUpperCase();
+      element.addEventListener("pointerdown", startTerminalDrag);
+      element.addEventListener("click", () => { state.selectedTerminal = terminal; renderAll(); });
+      layer.appendChild(element);
+    }
+  }
+
+  function nodeCenter(node, positions) {
+    if (node === "In" || node === "Out") return terminalCenter(node);
+    const position = positions[node];
+    return position ? cellCenter(position.row, position.column) : { x: GUTTER, y: GUTTER };
+  }
+
+  function addSvgPath(svg, points, className, directed = false) {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    if (points.length === 2) {
+      const [a, b] = points;
+      const bend = Math.max(30, Math.abs(b.x - a.x) * .44);
+      path.setAttribute("d", `M ${a.x} ${a.y} C ${a.x + bend} ${a.y}, ${b.x - bend} ${b.y}, ${b.x} ${b.y}`);
+    } else {
+      path.setAttribute("d", points.map((p, index) => `${index ? "L" : "M"} ${p.x} ${p.y}`).join(" "));
+    }
+    if (directed) path.setAttribute("marker-end", "url(#logical-edge-arrow)");
+    path.setAttribute("class", className); svg.appendChild(path);
+  }
+
+  function addLogicalArrowMarker(svg) {
+    const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+    const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
+    marker.setAttribute("id", "logical-edge-arrow");
+    marker.setAttribute("viewBox", "0 0 8 8");
+    marker.setAttribute("refX", "7");
+    marker.setAttribute("refY", "4");
+    marker.setAttribute("markerWidth", "8");
+    marker.setAttribute("markerHeight", "8");
+    marker.setAttribute("markerUnits", "userSpaceOnUse");
+    marker.setAttribute("orient", "auto");
+    const arrow = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    arrow.setAttribute("d", "M 0 0 L 8 4 L 0 8 Z");
+    arrow.setAttribute("class", "logical-arrow-head");
+    marker.appendChild(arrow); defs.appendChild(marker); svg.appendChild(defs);
+  }
+
+  function insetLogicalEdge(source, target, sourceNode, targetNode) {
+    const dx = target.x - source.x; const dy = target.y - source.y;
+    const length = Math.hypot(dx, dy) || 1;
+    const dominantDirection = Math.max(Math.abs(dx / length), Math.abs(dy / length), .001);
+    const facilityInset = clamp(state.cell * .58, 22, 32) / 2 / dominantDirection + 4;
+    const sourceInset = sourceNode === "In" || sourceNode === "Out" ? 34 : facilityInset;
+    const targetInset = targetNode === "In" || targetNode === "Out" ? 34 : facilityInset;
+    return [
+      { x: source.x + dx / length * sourceInset, y: source.y + dy / length * sourceInset },
+      { x: target.x - dx / length * targetInset, y: target.y - dy / length * targetInset }
+    ];
+  }
+
+  function addSvgPolyline(svg, points, className, titleText = "") {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", points.map((point, index) => `${index ? "L" : "M"} ${point.x} ${point.y}`).join(" "));
+    path.setAttribute("class", className);
+    if (titleText) {
+      const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+      title.textContent = titleText; path.appendChild(title);
+    }
+    svg.appendChild(path);
+    return path;
+  }
+
+  function cellKey(cell) { return `${cell[0]},${cell[1]}`; }
+
+  function orderedRouteCells(belt) {
+    const source = (state.solution.machs || []).find(machine => machine.id === belt.frm)?.pos;
+    const target = (state.solution.machs || []).find(machine => machine.id === belt.to)?.pos;
+    if (!source || !target || !(belt.edges || []).length) return [];
+    const cells = new Map(); const adjacency = new Map();
+    const remember = cell => { const key = cellKey(cell); cells.set(key, cell); if (!adjacency.has(key)) adjacency.set(key, new Set()); return key; };
+    for (const edge of belt.edges) {
+      if (!Array.isArray(edge) || edge.length !== 2) continue;
+      const a = remember(edge[0]); const b = remember(edge[1]);
+      adjacency.get(a).add(b); adjacency.get(b).add(a);
+    }
+    const start = cellKey(source); const end = cellKey(target);
+    if (!adjacency.has(start) || !adjacency.has(end)) return [];
+    const ordered = [source]; const visited = new Set([start]);
+    let current = start;
+    while (current !== end && ordered.length <= cells.size + 1) {
+      const next = [...(adjacency.get(current) || [])].find(key => !visited.has(key));
+      if (!next) return [];
+      ordered.push(cells.get(next)); visited.add(next); current = next;
+    }
+    return current === end ? ordered : [];
+  }
+
+  function compressRouteCells(cells) {
+    if (cells.length < 3) return cells;
+    const compact = [cells[0]]; let previousDirection = null;
+    for (let index = 1; index < cells.length; index++) {
+      const previous = cells[index - 1]; const current = cells[index];
+      const direction = `${Math.sign(current[0] - previous[0])},${Math.sign(current[1] - previous[1])}`;
+      if (direction === previousDirection) compact[compact.length - 1] = current;
+      else compact.push(current);
+      previousDirection = direction;
+    }
+    return compact;
+  }
+
+  function crossingEntries(routes) {
+    const facilityCells = new Set((state.solution.machs || []).map(machine => cellKey(machine.pos)));
+    const byCell = new Map();
+    routes.forEach(route => {
+      for (let index = 1; index < route.cells.length - 1; index++) {
+        const previous = route.cells[index - 1]; const current = route.cells[index]; const next = route.cells[index + 1];
+        const incoming = [current[0] - previous[0], current[1] - previous[1]];
+        const outgoing = [next[0] - current[0], next[1] - current[1]];
+        const straight = incoming[0] === outgoing[0] && incoming[1] === outgoing[1];
+        const entry = { route, straight, orientation: straight ? (incoming[0] ? "vertical" : "horizontal") : "turn" };
+        const key = cellKey(current);
+        if (!facilityCells.has(key)) (byCell.get(key) || (byCell.set(key, []), byCell.get(key))).push(entry);
+      }
+    });
+    return [...byCell.entries()].filter(([, entries]) => new Set(entries.map(entry => entry.route.index)).size > 1);
+  }
+
+  function isValidCrossing(entries) {
+    return entries.length === 2
+      && entries.every(entry => entry.straight)
+      && new Set(entries.map(entry => entry.orientation)).size === 2;
+  }
+
+  function renderCrossings(svg, routes) {
+    for (const [key, entries] of crossingEntries(routes)) {
+      const [row, column] = key.split(",").map(Number); const center = cellCenter(row, column);
+      if (!isValidCrossing(entries)) {
+        const titleText = `非法共享格 ${key} · 线路必须正交直穿`;
+        for (const [dx1, dy1, dx2, dy2] of [[-6, -6, 6, 6], [-6, 6, 6, -6]]) {
+          const marker = document.createElementNS("http://www.w3.org/2000/svg", "line");
+          marker.setAttribute("x1", center.x + dx1); marker.setAttribute("y1", center.y + dy1);
+          marker.setAttribute("x2", center.x + dx2); marker.setAttribute("y2", center.y + dy2);
+          marker.setAttribute("class", "route-crossing invalid-crossing-marker");
+          const title = document.createElementNS("http://www.w3.org/2000/svg", "title"); title.textContent = titleText; marker.appendChild(title);
+          svg.appendChild(marker);
+        }
+        continue;
+      }
+      const titleText = `线路交叉 · ${entries.map(entry => entry.route.label).join(" / ")} · 不连接`;
+      const marker = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      marker.setAttribute("cx", center.x); marker.setAttribute("cy", center.y); marker.setAttribute("r", 7);
+      marker.setAttribute("class", "route-crossing crossing-marker");
+      const title = document.createElementNS("http://www.w3.org/2000/svg", "title"); title.textContent = titleText; marker.appendChild(title);
+      svg.appendChild(marker);
+    }
+  }
+
+  function renderEdges(positions) {
+    const svg = $("#edge-layer");
+    svg.innerHTML = "";
+    svg.setAttribute("width", $("#grid-shell").clientWidth); svg.setAttribute("height", $("#grid-shell").clientHeight);
+    if (isSolutionView()) {
+      const routes = (state.solution.belts || []).map((belt, index) => {
+        const cells = orderedRouteCells(belt);
+        return { belt, index, cells, label: belt.id || `route-${index + 1}` };
+      });
+      for (const route of routes) {
+        const titleText = `${route.label} · ${route.belt.topoflow_source || route.belt.frm} → ${route.belt.topoflow_target || route.belt.to}`;
+        if (route.cells.length) {
+          const points = compressRouteCells(route.cells).map(cell => cellCenter(cell[0], cell[1]));
+          addSvgPolyline(svg, points, "edge-path solution-underlay", titleText);
+          const path = addSvgPolyline(svg, points, `edge-path solution-route ${route.belt.type === 2 ? "pipe" : ""}`, titleText);
+          path.dataset.routeId = route.label;
+        } else {
+          for (const edge of route.belt.edges || []) {
+            const points = edge.map(cell => cellCenter(cell[0], cell[1]));
+            addSvgPolyline(svg, points, "edge-path solution-underlay", titleText);
+            addSvgPolyline(svg, points, `edge-path solution-route ${route.belt.type === 2 ? "pipe" : ""}`, titleText);
+          }
+        }
+      }
+      renderCrossings(svg, routes);
+      const external = state.solution.topoflow?.external_connections || [];
+      for (const item of external) {
+        const terminal = item.source === "In" ? "In" : "Out";
+        const machine = (state.solution.machs || []).find(m => m.id === item.facility_id);
+        if (machine) {
+          const points = [terminalCenter(terminal), cellCenter(machine.pos[0], machine.pos[1])];
+          addSvgPolyline(svg, points, "edge-path solution-underlay", `${terminal} 外部连接`);
+          addSvgPolyline(svg, points, "edge-path solution-route", `${terminal} 外部连接`);
+        }
+      }
+      return;
+    }
+    addLogicalArrowMarker(svg);
+    const parallel = {};
+    for (const [index, [from, to]] of state.graph.edges.entries()) {
+      const key = `${from}->${to}`; const ordinal = parallel[key] || 0; parallel[key] = ordinal + 1;
+      const a = nodeCenter(from, positions); const b = nodeCenter(to, positions);
+      const offset = (ordinal - .5) * 7;
+      const [start, end] = insetLogicalEdge(
+        { x: a.x, y: a.y + offset },
+        { x: b.x, y: b.y + offset },
+        from,
+        to
+      );
+      addSvgPath(svg, [start, end], `edge-path ${state.transport === "pipe" ? "pipe" : ""}`, true);
+    }
+  }
+
+  function renderChecks() {
+    validateGraph();
+    const gridSearch = state.solution?.topoflow?.grid_search;
+    const recommendedGrid = gridSearch?.compactEstimate?.recommendedGrid;
+    let invalidCrossings = [];
+    if (state.solution && isSolutionView()) {
+      const routes = (state.solution.belts || []).map((belt, index) => ({
+        belt, index, cells: orderedRouteCells(belt), label: belt.id || `route-${index + 1}`
+      }));
+      invalidCrossings = crossingEntries(routes).filter(([, entries]) => !isValidCrossing(entries));
+    }
+    const checks = state.issues.length ? state.issues.map(text => ({ text, warn: true })) : [
+      ...(invalidCrossings.length ? [{
+        text: `旧解含非法共享格：${invalidCrossings.map(([key]) => key).join("、")}；请用新约束重新求解`, warn: true
+      }] : []),
+      { text: "TopoFlow 节点和边格式有效" },
+      { text: "入口与出口已绑定边界格" },
+      { text: "重复边将保留独立物理端口" },
+      { text: state.transport !== "belt" ? "分流到汇流的最短格约束仅对传送带生效" : state.constraints.requireSplitterMergerBeltCell ? "分流到汇流的皮带至少经过 1 个普通格" : "分流到汇流的皮带最短格约束未启用" },
+      { text: state.expansion.sizingMode === "compact" ? `自动紧凑：最多 ${state.expansion.compactCandidates} 个尺寸，范围不超过 ${state.expansion.maxRows}×${state.expansion.maxColumns}` : state.expansion.enabled ? `固定模式无解时扩展至最多 ${state.expansion.maxRows}×${state.expansion.maxColumns}` : "固定尺寸，自动扩网已关闭" },
+      ...(recommendedGrid && state.solution ? [{ text: `紧凑尺寸：预测 ${recommendedGrid.rows}×${recommendedGrid.columns}，实际 ${state.solution.n}×${state.solution.m}` }] : []),
+      { text: state.solution ? (isSolutionView() ? "空心圆仅表示两条线路正交直穿且不连接" : "正在回看求解前的原设计方案") : "可导出 CP-SAT 布局请求" }
+    ];
+    $("#check-list").innerHTML = checks.map(item => `<div class="check-item${item.warn ? " warn" : ""}">${escapeHtml(item.text)}</div>`).join("");
+    $("#export-btn").disabled = state.issues.length > 0 || !!state.solution;
+    $("#export-side-btn").disabled = state.issues.length > 0 || !!state.solution;
+  }
+
+  function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
+  }
+
+  function renderAll() {
+    normalizeTerminal("In"); normalizeTerminal("Out");
+    const layout = isSolutionView() ? null : logicalLayout();
+    const dimensions = previewDimensions(layout);
+    const origin = boardOffset(dimensions);
+    const shell = $("#grid-shell");
+    shell.style.setProperty("--rows", dimensions.rows); shell.style.setProperty("--cols", dimensions.columns); shell.style.setProperty("--cell", `${state.cell}px`);
+    shell.style.setProperty("--board-rows", state.rows); shell.style.setProperty("--board-cols", state.columns);
+    shell.style.setProperty("--board-left", `${GUTTER + origin.column * state.cell}px`);
+    shell.style.setProperty("--board-top", `${GUTTER + origin.row * state.cell}px`);
+    $("#grid-board").dataset.fieldLabel = isSolutionView() ? "SOLVED FIELD" : `SOLVE FIELD · ${state.rows}×${state.columns}`;
+    $("#node-layer").innerHTML = "";
+    renderAxes(dimensions);
+    const positions = logicalPositions(layout, dimensions); renderFacilities(positions); renderTerminals(); renderEdges(positions); renderChecks();
+    const nodes = state.graph?.nodes || []; const edges = state.graph?.edges || [];
+    $("#graph-stats").textContent = `${nodes.length} nodes / ${edges.length} edges`;
+    $("#mode-label").textContent = state.solution
+      ? (isSolutionView() ? "物理解预览 · 端口与路径来自 CP-SAT" : `原设计回看 · 拖动元件仅调整预览${dimensions.expanded ? " · 放不下的元件显示在网格外" : ""}`)
+      : `逻辑拓扑预览 · 元件可拖动（仅视觉）${dimensions.expanded ? " · 放不下的元件显示在网格外" : ""} · IN / OUT 设置边界`;
+    $("#source-name").textContent = state.sourceName;
+    const target = state.selected?.target;
+    $("#source-meta").textContent = `rank ${state.rank}${target ? ` · target ${target.p}/${target.q}` : ""} · input ${state.inputPattern}`;
+    $("#zoom-label").textContent = `${Math.round(state.cell / 46 * 100)}%`;
+    const counts = { S2: 0, S3: 0, C2: 0, C3: 0 };
+    nodes.forEach(node => { const key = String(node).split("_")[0]; if (key in counts) counts[key] += 1; });
+    Object.entries(counts).forEach(([key, count]) => $(`#count-${key.toLowerCase()}`).textContent = count);
+    $$('[data-terminal-card]').forEach(card => card.classList.toggle("active", card.dataset.terminalCard === state.selectedTerminal));
+    $("#footer-state").textContent = state.issues.length ? "● CHECK INPUT" : "● READY";
+    $("#footer-state").className = state.issues.length ? "" : "status-ready";
+  }
+
+  function syncControls() {
+    $("#project-name").value = state.name; $("#rows-input").value = state.rows; $("#cols-input").value = state.columns;
+    $("#transport-select").value = state.transport;
+    $("#input-pattern-input").value = state.inputPattern;
+    $("#min-splitter-merger-belt-input").checked = state.constraints.requireSplitterMergerBeltCell;
+    $("#sizing-mode-select").value = state.expansion.sizingMode;
+    $("#compact-candidates-input").value = state.expansion.compactCandidates;
+    $("#auto-expand-input").checked = state.expansion.enabled;
+    $("#expand-step-input").value = state.expansion.step;
+    $("#max-rows-input").value = state.expansion.maxRows;
+    $("#max-cols-input").value = state.expansion.maxColumns;
+    const reviewOnly = !!state.solution;
+    const compactMode = state.expansion.sizingMode === "compact";
+    $("#rows-label").textContent = compactMode ? "最大行 Rows" : "初始行 Rows";
+    $("#cols-label").textContent = compactMode ? "最大列 Columns" : "初始列 Columns";
+    $("#expand-step-input").disabled = reviewOnly || compactMode || !state.expansion.enabled;
+    $("#max-rows-input").disabled = reviewOnly;
+    $("#max-cols-input").disabled = reviewOnly;
+    $("#compact-candidates-field").hidden = !compactMode;
+    $("#auto-expand-row").hidden = compactMode;
+    $("#expansion-fields").hidden = compactMode || !state.expansion.enabled;
+    $("#compact-candidates-input").disabled = reviewOnly || !compactMode;
+    $("#auto-expand-input").disabled = reviewOnly || compactMode;
+    ["#project-name", "#rows-input", "#cols-input", "#transport-select", "#input-pattern-input", "#rank-select", "#sizing-mode-select"].forEach(selector => { $(selector).disabled = reviewOnly; });
+    $("#min-splitter-merger-belt-input").disabled = reviewOnly || state.transport !== "belt";
+    $$('[data-side], [data-offset]').forEach(input => { input.disabled = reviewOnly; });
+    const reviewButton = $("#review-design-btn"); reviewButton.hidden = !state.solution;
+    reviewButton.textContent = isSolutionView() ? "查看原设计" : "返回物理解";
+    for (const terminal of ["In", "Out"]) {
+      $(`[data-side="${terminal}"]`).value = state.terminals[terminal].side;
+      const input = $(`[data-offset="${terminal}"]`); input.value = state.terminals[terminal].offset + 1; input.min = 1; input.max = terminalLimit(terminal);
+    }
+    const ranks = state.results.map((item, index) => Number(item.rank || index + 1));
+    $("#rank-select").innerHTML = ranks.map(rank => `<option value="${rank}">Rank ${rank}</option>`).join("");
+    $("#rank-select").value = String(state.rank);
+  }
+
+  function startTerminalDrag(event) {
+    if (state.solution) return;
+    dragTerminal = event.currentTarget.dataset.terminal;
+    state.selectedTerminal = dragTerminal;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    window.addEventListener("pointermove", moveTerminalDrag);
+    window.addEventListener("pointerup", endTerminalDrag, { once: true });
+    event.preventDefault();
+  }
+
+  function moveTerminalDrag(event) {
+    if (!dragTerminal) return;
+    const rect = $("#grid-board").getBoundingClientRect();
+    const x = event.clientX - rect.left; const y = event.clientY - rect.top;
+    const distances = { left: Math.abs(x), right: Math.abs(rect.width - x), top: Math.abs(y), bottom: Math.abs(rect.height - y) };
+    const side = Object.entries(distances).sort((a, b) => a[1] - b[1])[0][0];
+    const position = side === "left" || side === "right" ? y / rect.height : x / rect.width;
+    const rawOffset = Math.floor(clamp(position, 0, .999999) * terminalLimitForSide(side));
+    state.terminals[dragTerminal] = { side, offset: clamp(rawOffset, 0, terminalLimitForSide(side) - 1) };
+    syncControls(); renderAll();
+  }
+
+  function endTerminalDrag() {
+    window.removeEventListener("pointermove", moveTerminalDrag);
+    dragTerminal = null; saveSettings();
+  }
+
+  function startFacilityDrag(event) {
+    if (isSolutionView()) return;
+    const node = event.currentTarget.dataset.nodeId;
+    const position = logicalPositions()[node];
+    if (!position) return;
+    const rect = $("#grid-shell").getBoundingClientRect();
+    const pointerX = event.clientX - rect.left - GUTTER;
+    const pointerY = event.clientY - rect.top - GUTTER;
+    dragFacility = {
+      node,
+      element: event.currentTarget,
+      offsetX: pointerX - (position.column + .5) * state.cell,
+      offsetY: pointerY - (position.row + .5) * state.cell
+    };
+    dragFacility.element.classList.add("dragging");
+    dragFacility.element.setPointerCapture(event.pointerId);
+    window.addEventListener("pointermove", moveFacilityDrag);
+    window.addEventListener("pointerup", endFacilityDrag);
+    window.addEventListener("pointercancel", endFacilityDrag);
+    event.preventDefault();
+  }
+
+  function moveFacilityDrag(event) {
+    if (!dragFacility) return;
+    const rect = $("#grid-shell").getBoundingClientRect();
+    const canvasWidth = rect.width - GUTTER * 2; const canvasHeight = rect.height - GUTTER * 2;
+    const centerX = clamp(event.clientX - rect.left - GUTTER - dragFacility.offsetX, state.cell / 2, canvasWidth - state.cell / 2);
+    const centerY = clamp(event.clientY - rect.top - GUTTER - dragFacility.offsetY, state.cell / 2, canvasHeight - state.cell / 2);
+    const position = {
+      row: centerY / state.cell - .5,
+      column: centerX / state.cell - .5
+    };
+    state.previewPositions[dragFacility.node] = position;
+    dragFacility.element.style.left = `${GUTTER + centerX}px`;
+    dragFacility.element.style.top = `${GUTTER + centerY}px`;
+    renderEdges(logicalPositions());
+    event.preventDefault();
+  }
+
+  function endFacilityDrag() {
+    if (!dragFacility) return;
+    dragFacility.element.classList.remove("dragging");
+    dragFacility = null;
+    window.removeEventListener("pointermove", moveFacilityDrag);
+    window.removeEventListener("pointerup", endFacilityDrag);
+    window.removeEventListener("pointercancel", endFacilityDrag);
+    toast("仅调整预览位置，求解数据未改变");
+  }
+
+  function buildRequest() {
+    validateGraph();
+    if (state.issues.length) throw new Error(state.issues[0]);
+    return {
+      schema: SCHEMA,
+      name: state.name.trim() || "topoflow-layout",
+      rank: state.rank,
+      grid: { rows: state.rows, columns: state.columns },
+      transport: state.transport,
+      simulation: { inputPattern: state.inputPattern.trim() },
+      constraints: deepCopy(state.constraints),
+      terminals: deepCopy(state.terminals),
+      searchExpansion: {
+        sizingMode: state.expansion.sizingMode,
+        compactCandidates: state.expansion.compactCandidates,
+        enabled: state.expansion.sizingMode === "fixed" && state.expansion.enabled,
+        step: state.expansion.step,
+        maxRows: state.expansion.maxRows,
+        maxColumns: state.expansion.maxColumns
+      },
+      topoflow: deepCopy(state.selected)
+    };
+  }
+
+  function downloadRequest() {
+    try {
+      const request = buildRequest();
+      const blob = new Blob([JSON.stringify(request, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob); const link = document.createElement("a");
+      link.href = url; link.download = `${request.name.replace(/[^\w\u4e00-\u9fff.-]+/g, "_")}.layout.json`;
+      link.click(); URL.revokeObjectURL(url); toast(`已导出 ${link.download}`);
+    } catch (error) { toast(error.message); }
+  }
+
+  async function copyCommand() {
+    const command = "python cli.py";
+    try { await navigator.clipboard.writeText(command); toast("求解命令已复制"); }
+    catch (_) { toast(command); }
+  }
+
+  async function readFile(file) {
+    if (!file) return;
+    try { loadObject(JSON.parse(await file.text()), file.name); }
+    catch (error) { toast(`导入失败：${error.message}`); }
+  }
+
+  function applySessionConfig(session) {
+    const config = session?.config || {};
+    state.name = session?.name || state.name;
+    state.rows = clamp(Number(config.rows) || state.rows, 3, 30);
+    state.columns = clamp(Number(config.columns) || state.columns, 3, 30);
+    state.transport = config.transport === "pipe" ? "pipe" : "belt";
+    if (typeof config.inputPattern === "string" && /^[01]+$/.test(config.inputPattern)) state.inputPattern = config.inputPattern;
+    state.terminals = {
+      In: { side: config.terminalInSide || "left", offset: Number(config.terminalInOffset) || 0 },
+      Out: { side: config.terminalOutSide || "right", offset: Number(config.terminalOutOffset) || 0 }
+    };
+    state.expansion = {
+      sizingMode: config.physicalSizingMode === "fixed" ? "fixed" : "compact",
+      compactCandidates: Number(config.compactGridCandidates) || 6,
+      enabled: config.autoExpand !== false,
+      step: Number(config.expandStep) || 1,
+      maxRows: Number(config.maxRows) || state.rows,
+      maxColumns: Number(config.maxColumns) || state.columns
+    };
+    normalizeTerminal("In"); normalizeTerminal("Out"); normalizeExpansion();
+  }
+
+  function sessionArtifactPath(value, fallback) {
+    const path = String(value || fallback || "").replace(/\\/g, "/").replace(/^\.\//, "");
+    const parts = path.split("/");
+    if (!path || path.startsWith("/") || /^[a-z]:/i.test(path) || parts.some(part => !part || part === "." || part === "..")) {
+      throw new Error(`Session artifact 路径无效：${path || "(空)"}`);
+    }
+    return path;
+  }
+
+  async function loadSessionPayload(session, readRelative) {
+    if (!session || session.schema !== "topoflow-workflow-session/v1") throw new Error("不是有效的 TopoFlow Session");
+    const artifacts = session.artifacts || {};
+    const choices = [
+      ["physical", sessionArtifactPath(artifacts.physical, "physical/solution.json"), "物理解"],
+      ["analysis", sessionArtifactPath(artifacts.analysis, "discrete/analysis.json"), "离散分析"],
+      ["input", sessionArtifactPath(artifacts.input, "input/original.json"), "原始输入"]
+    ];
+    let loaded = null;
+    for (const [kind, path, label] of choices) {
+      try {
+        const text = await readRelative(String(path).replace(/\\/g, "/"));
+        if (!text) continue;
+        loaded = { kind, label, object: JSON.parse(text) };
+        break;
+      } catch (error) {
+        if (error?.name !== "NotFoundError") throw error;
+      }
+    }
+    if (!loaded) throw new Error("Session 中没有可读取的物理解、离散分析或原始输入");
+    applySessionConfig(session);
+    loadObject(loaded.object, `${session.name || "Session"} · ${loaded.label}`);
+    if (loaded.kind !== "physical") applySessionConfig(session);
+    state.sourceName = `${session.name || "Session"} · ${loaded.label}`;
+    syncControls(); saveSettings(); renderAll();
+    toast(`已打开 Session：${loaded.label}`);
+  }
+
+  async function readDirectoryFile(directory, relativePath) {
+    const parts = relativePath.split("/").filter(Boolean);
+    let current = directory;
+    for (const part of parts.slice(0, -1)) current = await current.getDirectoryHandle(part);
+    return (await (await current.getFileHandle(parts.at(-1))).getFile()).text();
+  }
+
+  async function openSessionDirectory() {
+    if (!window.showDirectoryPicker) {
+      $("#session-folder-input").click();
+      return;
+    }
+    try {
+      const directory = await window.showDirectoryPicker({ mode: "read" });
+      const session = JSON.parse(await readDirectoryFile(directory, "session.json"));
+      await loadSessionPayload(session, path => readDirectoryFile(directory, path));
+    } catch (error) {
+      if (error?.name !== "AbortError") toast(`Session 打开失败：${error.message}`);
+    }
+  }
+
+  async function openSessionFiles(fileList) {
+    try {
+      const files = [...fileList];
+      const sessionFile = files.find(file => /(^|\/)session\.json$/i.test(file.webkitRelativePath || file.name));
+      if (!sessionFile) throw new Error("所选文件夹中没有 session.json");
+      const prefix = (sessionFile.webkitRelativePath || "").replace(/session\.json$/i, "");
+      const byPath = new Map(files.map(file => [
+        (file.webkitRelativePath || file.name).replace(/\\/g, "/").slice(prefix.length), file
+      ]));
+      const session = JSON.parse(await sessionFile.text());
+      await loadSessionPayload(session, async path => {
+        const file = byPath.get(path);
+        if (!file) { const error = new Error(path); error.name = "NotFoundError"; throw error; }
+        return file.text();
+      });
+    } catch (error) {
+      toast(`Session 打开失败：${error.message}`);
+    }
+  }
+
+  function openPasteDialog(text = "") {
+    const dialog = $("#paste-dialog");
+    $("#paste-text").value = text;
+    $("#paste-error").textContent = "";
+    if (!dialog.open) dialog.showModal();
+    requestAnimationFrame(() => $("#paste-text").focus());
+  }
+
+  function loadPastedText(text = $("#paste-text").value) {
+    const content = String(text || "").trim();
+    if (!content) {
+      $("#paste-error").textContent = "请先粘贴 JSON 文本";
+      return false;
+    }
+    try {
+      loadObject(JSON.parse(content), "粘贴文本");
+      if ($("#paste-dialog").open) $("#paste-dialog").close();
+      return true;
+    } catch (error) {
+      $("#paste-text").value = text;
+      $("#paste-error").textContent = `解析失败：${error.message}`;
+      if (!$("#paste-dialog").open) $("#paste-dialog").showModal();
+      requestAnimationFrame(() => $("#paste-text").focus());
+      return false;
+    }
+  }
+
+  function bindEvents() {
+    $("#session-btn").onclick = openSessionDirectory;
+    $("#session-folder-input").onchange = event => { openSessionFiles(event.target.files); event.target.value = ""; };
+    $("#import-btn").onclick = () => $("#file-input").click();
+    $("#paste-btn").onclick = () => openPasteDialog();
+    $("#paste-load-btn").onclick = () => loadPastedText();
+    $("#paste-cancel-btn").onclick = () => $("#paste-dialog").close();
+    $("#paste-text").onkeydown = event => {
+      if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault(); loadPastedText();
+      }
+    };
+    $("#paste-dialog").onclick = event => { if (event.target === $("#paste-dialog")) $("#paste-dialog").close(); };
+    $("#drop-zone").onclick = () => $("#file-input").click();
+    $("#drop-zone").onkeydown = event => { if (event.key === "Enter" || event.key === " ") $("#file-input").click(); };
+    $("#file-input").onchange = event => { readFile(event.target.files[0]); event.target.value = ""; };
+    for (const type of ["dragenter", "dragover"]) $("#drop-zone").addEventListener(type, event => { event.preventDefault(); $("#drop-zone").classList.add("dragover"); });
+    for (const type of ["dragleave", "drop"]) $("#drop-zone").addEventListener(type, event => { event.preventDefault(); $("#drop-zone").classList.remove("dragover"); });
+    $("#drop-zone").addEventListener("drop", event => readFile(event.dataTransfer.files[0]));
+    $("#drop-zone").addEventListener("paste", event => {
+      const text = event.clipboardData?.getData("text/plain") || "";
+      if (!text.trim()) return;
+      event.preventDefault();
+      loadPastedText(text);
+    });
+    $("#export-btn").onclick = downloadRequest; $("#export-side-btn").onclick = downloadRequest; $("#copy-command-btn").onclick = copyCommand;
+    $("#review-design-btn").onclick = switchSolutionView;
+    $("#demo-btn").onclick = () => loadObject(deepCopy(DEMO), "内置演示拓扑");
+    $("#rank-select").onchange = event => {
+      const parsed = selectedResultFrom(state.results, Number(event.target.value));
+      state.rank = Number(event.target.value); state.selected = parsed.selected; state.graph = parsed.graph; state.solution = null; state.originalDesign = null; state.viewMode = "design"; state.previewPositions = {}; renderAll();
+    };
+    $("#project-name").oninput = event => { state.name = event.target.value; saveSettings(); };
+    $("#rows-input").onchange = event => { state.rows = clamp(Number(event.target.value) || 12, 3, 40); if (state.expansion.sizingMode === "compact") state.expansion.maxRows = state.rows; normalizeTerminal("In"); normalizeTerminal("Out"); normalizeExpansion(); syncControls(); saveSettings(); renderAll(); };
+    $("#cols-input").onchange = event => { state.columns = clamp(Number(event.target.value) || 12, 3, 40); if (state.expansion.sizingMode === "compact") state.expansion.maxColumns = state.columns; normalizeTerminal("In"); normalizeTerminal("Out"); normalizeExpansion(); syncControls(); saveSettings(); renderAll(); };
+    $("#transport-select").onchange = event => { state.transport = event.target.value; syncControls(); saveSettings(); renderAll(); };
+    $("#input-pattern-input").oninput = event => { state.inputPattern = event.target.value.trim(); saveSettings(); renderAll(); };
+    $("#min-splitter-merger-belt-input").onchange = event => { state.constraints.requireSplitterMergerBeltCell = event.target.checked; saveSettings(); renderAll(); };
+    $("#sizing-mode-select").onchange = event => { state.expansion.sizingMode = event.target.value === "fixed" ? "fixed" : "compact"; normalizeExpansion(); syncControls(); saveSettings(); renderAll(); };
+    $("#compact-candidates-input").onchange = event => { state.expansion.compactCandidates = Number(event.target.value) || 6; normalizeExpansion(); syncControls(); saveSettings(); renderAll(); };
+    $("#auto-expand-input").onchange = event => { state.expansion.enabled = event.target.checked; syncControls(); saveSettings(); renderAll(); };
+    $("#expand-step-input").onchange = event => { state.expansion.step = Number(event.target.value) || 1; normalizeExpansion(); syncControls(); saveSettings(); renderAll(); };
+    $("#max-rows-input").onchange = event => { state.expansion.maxRows = Number(event.target.value) || state.rows; normalizeExpansion(); syncControls(); saveSettings(); renderAll(); };
+    $("#max-cols-input").onchange = event => { state.expansion.maxColumns = Number(event.target.value) || state.columns; normalizeExpansion(); syncControls(); saveSettings(); renderAll(); };
+    $$('[data-side]').forEach(select => select.onchange = event => {
+      const terminal = event.target.dataset.side; state.terminals[terminal].side = event.target.value; normalizeTerminal(terminal); state.selectedTerminal = terminal; syncControls(); saveSettings(); renderAll();
+    });
+    $$('[data-offset]').forEach(input => input.onchange = event => {
+      const terminal = event.target.dataset.offset; const positionId = Number(event.target.value); state.terminals[terminal].offset = Number.isFinite(positionId) ? positionId - 1 : 0; normalizeTerminal(terminal); state.selectedTerminal = terminal; syncControls(); saveSettings(); renderAll();
+    });
+    $$('[data-terminal-card]').forEach(card => card.onclick = () => { state.selectedTerminal = card.dataset.terminalCard; renderAll(); });
+    $("#zoom-in").onclick = () => { state.cell = clamp(state.cell + 4, 28, 68); saveSettings(); renderAll(); };
+    $("#zoom-out").onclick = () => { state.cell = clamp(state.cell - 4, 28, 68); saveSettings(); renderAll(); };
+  }
+
+  restoreSettings(); normalizeExpansion(); bindEvents(); syncControls(); renderAll();
+
+  // 支持父页面通过 postMessage 注入物理解预览（供 iframe 复用本渲染器）
+  window.addEventListener("message", (event) => {
+    const data = event.data;
+    if (data && data.kind === "topoflow-layout" && data.solution) {
+      try { loadObject(data.solution, data.fileName || "物理布局"); }
+      catch (error) { console.error("[topoflow] 注入失败", error); }
+    }
+  });
+})();
+</script>
+</body>
+</html>

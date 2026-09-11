@@ -1,0 +1,112 @@
+mod exact_lp;
+mod graph;
+mod ilp_bridge;
+mod rank_smt;
+mod stable;
+
+use num_bigint::BigInt;
+use num_rational::BigRational;
+use num_traits::ToPrimitive;
+use pyo3::prelude::*;
+
+pub(crate) type Rat = BigRational;
+
+pub(crate) fn rat(value: i64) -> Rat {
+    BigRational::from_integer(BigInt::from(value))
+}
+
+#[pyclass(frozen)]
+#[derive(Clone)]
+pub struct NativeFlowSolution {
+    #[pyo3(get)]
+    pub backend: String,
+    #[pyo3(get)]
+    pub status: String,
+    #[pyo3(get)]
+    pub feasible: bool,
+    #[pyo3(get)]
+    pub flows: Vec<f64>,
+    #[pyo3(get)]
+    pub total_flow: f64,
+    #[pyo3(get)]
+    pub iterations: usize,
+    #[pyo3(get)]
+    pub flow_numerators: Vec<BigInt>,
+    #[pyo3(get)]
+    pub flow_denominators: Vec<BigInt>,
+    #[pyo3(get)]
+    pub total_numerator: BigInt,
+    #[pyo3(get)]
+    pub total_denominator: BigInt,
+    #[pyo3(get)]
+    pub full_rank: bool,
+}
+
+impl NativeFlowSolution {
+    pub fn from_fractions(
+        backend: String,
+        status: String,
+        feasible: bool,
+        flows: Vec<BigRational>,
+        total: BigRational,
+        iterations: usize,
+        full_rank: bool,
+    ) -> Self {
+        let floats: Vec<f64> = flows
+            .iter()
+            .map(|value| value.to_f64().unwrap_or(f64::NAN))
+            .collect();
+        let total_flow = total.to_f64().unwrap_or(f64::NAN);
+        let flow_numerators: Vec<BigInt> =
+            flows.iter().map(|value| value.numer().clone()).collect();
+        let flow_denominators: Vec<BigInt> =
+            flows.iter().map(|value| value.denom().clone()).collect();
+        Self {
+            backend,
+            status,
+            feasible,
+            flows: floats,
+            total_flow,
+            iterations,
+            flow_numerators,
+            flow_denominators,
+            total_numerator: total.numer().clone(),
+            total_denominator: total.denom().clone(),
+            full_rank,
+        }
+    }
+}
+
+#[pyfunction]
+#[pyo3(signature = (edges, fixed_edges=None))]
+fn solve_rank_smt(
+    edges: Vec<(String, String)>,
+    fixed_edges: Option<Vec<usize>>,
+) -> PyResult<NativeFlowSolution> {
+    rank_smt::solve(edges, fixed_edges).map_err(pyo3::exceptions::PyValueError::new_err)
+}
+
+#[pyfunction]
+#[pyo3(signature = (edges, max_iterations=100000, tolerance=1e-10))]
+fn solve_stable_polynomial(
+    edges: Vec<(String, String)>,
+    max_iterations: usize,
+    tolerance: f64,
+) -> PyResult<NativeFlowSolution> {
+    stable::solve(edges, max_iterations, tolerance).map_err(pyo3::exceptions::PyValueError::new_err)
+}
+
+#[pyfunction]
+fn native_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
+#[pymodule]
+fn topoflow_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeFlowSolution>()?;
+    module.add_function(wrap_pyfunction!(solve_rank_smt, module)?)?;
+    module.add_function(wrap_pyfunction!(solve_stable_polynomial, module)?)?;
+    module.add_function(wrap_pyfunction!(native_version, module)?)?;
+    ilp_bridge::register(module)?;
+    Ok(())
+}

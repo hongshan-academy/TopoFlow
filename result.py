@@ -1,7 +1,10 @@
 from dataclasses import dataclass, field
 from typing import Dict, List
 
-import pulp
+# Solver status strings used by the exact MILP engine.
+STATUS_OPTIMAL = "Optimal"
+STATUS_INFEASIBLE = "Infeasible"
+STATUS_UNDEFINED = "Undefined"
 
 
 @dataclass
@@ -14,7 +17,7 @@ class EdgeResult:
 
 @dataclass
 class SolverResult:
-    status: int
+    status: str
     edges: List[EdgeResult] = field(default_factory=list)
 
 @dataclass
@@ -23,8 +26,8 @@ class SimulatorResult:
     converged: bool = True
 
 def format_result(result: SolverResult) -> str:
-    string = f'FESSIBLE: {pulp.LpStatus[result.status]}\n\n'
-    if pulp.LpStatus[result.status] == 'Optimal':
+    string = f'FESSIBLE: {result.status}\n\n'
+    if result.status == STATUS_OPTIMAL:
         string += f'EDGES: \n'
         for edge_result in result.edges:
             if edge_result.is_blocked:

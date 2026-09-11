@@ -6,7 +6,7 @@ from result import EdgeResult, SimulatorResult
 from graph import Graph, Node, Edge, NodeType
 
 
-EDGE_CAPACITY = 2
+EDGE_CAPACITY = 4
 
 EdgeKey = Tuple[Node, Node, int]
 

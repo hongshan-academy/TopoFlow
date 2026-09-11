@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>TopoFlow Simulator</title>
+    <title>TopoFlow 综合工具</title>
     <style>
       :root {
         --bg: #f4efe6;
@@ -14,14 +14,7 @@
         --accent: #19324d;
       }
 
-      * {
-        box-sizing: border-box;
-      }
-
-      html, body {
-        height: 100%;
-        overflow: hidden;
-      }
+      * { box-sizing: border-box; }
 
       body {
         margin: 0;
@@ -38,6 +31,9 @@
         grid-template-columns: 280px 1fr 300px;
         gap: 16px;
         padding: 16px;
+        overflow: hidden;
+        user-select: none;
+        -webkit-user-select: none;
       }
 
       .panel {
@@ -45,69 +41,41 @@
         border: 1px solid var(--line);
         border-radius: 18px;
         box-shadow: 0 16px 40px rgba(72, 55, 24, 0.08);
+        overflow: hidden;
         display: flex;
         flex-direction: column;
-        overflow: hidden;
       }
 
-      .controls,
-      .inspector {
+      .controls, .inspector {
         padding: 18px;
         overflow-y: auto;
-        flex: 1 1 0;
       }
 
-      h1,
-      h2 {
-        margin: 0 0 12px;
-        font-size: 20px;
-      }
+      /* 让左侧和右侧面板的内容自适应填满 */
+      .controls { overscroll-behavior: contain; }
+      .inspector { overscroll-behavior: contain; }
 
-      .subtitle {
-        margin: 0 0 18px;
-        color: var(--muted);
-        line-height: 1.5;
-      }
-
-      .control-group {
-        display: grid;
-        gap: 10px;
-        margin-bottom: 18px;
-      }
-
+      h1, h2 { margin: 0 0 12px; font-size: 20px; }
+      .subtitle { margin: 0 0 18px; color: var(--muted); line-height: 1.5; }
+      .control-group { display: grid; gap: 10px; margin-bottom: 18px; }
       .tool-grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 10px;
       }
-
       .buttons {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 10px;
       }
-
       .checkbox-row {
         display: flex;
         align-items: center;
         gap: 10px;
         color: var(--ink);
       }
-
-      .continuous-label {
-        color: #0f766e;
-        font-weight: 700;
-      }
-
-      .discrete-label {
-        color: #1f2937;
-        font-weight: 700;
-      }
-
-      .inline-input {
-        display: grid;
-        gap: 8px;
-      }
+      .continuous-label { color: #0f766e; font-weight: 700; }
+      .inline-input { display: grid; gap: 8px; }
 
       .solver-group {
         display: grid;
@@ -117,10 +85,7 @@
         border-radius: 10px;
         background: #f4ebdd;
       }
-
-      .solver-group .solver-toggle {
-        font-weight: 700;
-      }
+      .solver-group .solver-toggle { font-weight: 700; }
 
       .solver-options {
         display: grid;
@@ -130,80 +95,39 @@
         border-radius: 8px;
         background: #fffaf1;
       }
-
       .solver-options.inline-row {
         grid-template-columns: minmax(0, 1fr) 96px;
         align-items: end;
       }
-
-      .solver-options.inline-row .inline-input {
-        gap: 4px;
-      }
-
+      .solver-options.inline-row .inline-input { gap: 4px; }
       .solver-options legend {
         padding: 0 4px;
         color: var(--muted);
         font-size: 13px;
       }
-
       .solver-options label {
         display: flex;
         align-items: flex-start;
         gap: 8px;
         line-height: 1.35;
       }
-
       .solver-options .inline-input {
         display: grid;
         gap: 4px;
       }
+      .solver-options .inline-input span { white-space: nowrap; }
+      .stack { display: grid; gap: 10px; }
 
-      .solver-options .inline-input span {
-        white-space: nowrap;
-      }
+      button, input[type="range"], input[type="number"],
+      input[type="text"], select { width: 100%; }
 
-      .solution-nav-row {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin-top: 10px;
-      }
-
-      .solution-nav-row button {
-        width: auto;
-        flex: 0 0 auto;
-      }
-
-      .solution-nav-row span {
-        flex: 1;
-        text-align: center;
-        font-weight: 600;
-        font-size: 14px;
-      }
-
-      .stack {
-        display: grid;
-        gap: 10px;
-      }
-
-      button,
-      input[type="range"],
-      input[type="number"],
-      input[type="text"],
-      select {
-        width: 100%;
-      }
-
-      input[type="number"],
-      input[type="text"],
-      select {
+      input[type="number"], input[type="text"], select {
         border: 1px solid var(--line);
         border-radius: 12px;
         padding: 10px 12px;
         background: white;
         color: var(--ink);
       }
-
       button {
         border: 0;
         border-radius: 12px;
@@ -211,20 +135,9 @@
         background: var(--accent);
         color: white;
         cursor: pointer;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        line-height: 1.25;
-        min-height: 0;
       }
-
-      button.secondary {
-        background: #8b6f47;
-      }
-
-      button.is-active {
-        background: #0f766e;
-      }
+      button.secondary { background: #8b6f47; }
+      button.is-active { background: #0f766e; }
 
       .stat-row {
         display: flex;
@@ -233,16 +146,10 @@
         padding: 10px 0;
         border-bottom: 1px solid var(--line);
       }
+      .stat-row:last-child { border-bottom: 0; }
+      .initial-state-row { display: none; }
 
-      .stat-row:last-child {
-        border-bottom: 0;
-      }
-
-      .radio-row {
-        display: flex;
-        gap: 8px;
-      }
-
+      .radio-row { display: flex; gap: 8px; }
       .radio-pill {
         display: inline-flex;
         align-items: center;
@@ -253,31 +160,14 @@
         cursor: pointer;
         font-size: 13px;
       }
-
-      .radio-pill input {
-        width: auto;
-        margin: 0;
-      }
-
-      .stat-key {
-        color: var(--muted);
-      }
-
-      .graph-panel {
-        overflow: hidden;
-        position: relative;
-        display: flex;
-        flex-direction: column;
-      }
-
-      .graph-header {
-        padding: 18px 18px 0;
-        flex: 0 0 auto;
-      }
-
+      .radio-pill input { width: auto; margin: 0; }
+      .stat-key { color: var(--muted); }
+      .graph-panel { overflow: hidden; position: relative; flex: 1; }
+      .graph-header { padding: 18px 18px 0; }
       .graph-wrap {
         padding: 10px 12px 12px;
-        flex: 1 1 0;
+        flex: 1;
+        display: flex;
         min-height: 0;
       }
 
@@ -301,33 +191,26 @@
         stroke-width: 18;
         cursor: pointer;
       }
-
       .edge-line {
         fill: none;
-        stroke: #667085;
+        stroke: #16a34a;
         stroke-width: 3;
         marker-end: url(#arrow);
         transition: stroke 100ms ease, stroke-width 100ms ease;
       }
-
-      .edge-group.is-active .edge-line {
-        stroke-width: 5;
-      }
-
+      .edge-group.is-active .edge-line { stroke-width: 5; }
       .edge-group.is-selected .edge-line {
         stroke-width: 5;
-        filter: drop-shadow(0 0 3px rgba(102, 112, 133, 0.95));
+        filter: drop-shadow(0 0 3px rgba(22, 163, 74, 0.95));
       }
-
-      .edge-group.is-blocked .edge-line {
-        stroke: #dc2626;
+      .edge-group.is-semi .edge-line { stroke: #ea580c; }
+      .edge-group.is-semi.is-selected .edge-line {
+        filter: drop-shadow(0 0 3px rgba(234, 88, 12, 0.95));
       }
-
-      .edge-line.draft-edge {
-        stroke: #0f766e;
-        stroke-dasharray: 8 6;
+      .edge-group.is-blocked .edge-line { stroke: #dc2626; }
+      .edge-group.is-blocked.is-selected .edge-line {
+        filter: drop-shadow(0 0 3px rgba(220, 38, 38, 0.95));
       }
-
       .graph-boundary {
         fill: none;
         stroke: #8b6f47;
@@ -335,61 +218,41 @@
         stroke-dasharray: 16 12;
         pointer-events: none;
       }
-
       .edge-flow {
         fill: #1f2937;
         font-size: 11px;
         font-weight: 700;
         pointer-events: none;
       }
-
-      .edge-flow-continuous {
-        fill: #0f766e;
-      }
-
-      .node {
-        cursor: pointer;
-      }
-
+      .edge-flow-continuous { fill: #0f766e; }
+      .edge-flow-sim { fill: #b45309; }
+      .node { cursor: pointer; }
       .node circle {
         stroke: rgba(255, 255, 255, 0.78);
         stroke-width: 3;
         transition: transform 120ms ease, stroke-width 120ms ease, filter 120ms ease;
       }
-
       .node text {
         fill: white;
         font-size: 12px;
         font-weight: 600;
         pointer-events: none;
       }
-
-      .node .node-type {
-        font-size: 10px;
-        font-weight: 500;
-        opacity: 0.92;
-      }
-
+      .node .node-type { font-size: 10px; font-weight: 500; opacity: 0.92; }
       .node .node-flow {
         fill: #1f2937;
         font-size: 11px;
         font-weight: 700;
       }
-
-      .node .node-flow-continuous {
-        fill: #0f766e;
-      }
-
+      .node .node-flow-continuous { fill: #0f766e; }
       .node.is-selected circle {
         stroke: #111827;
         stroke-width: 5;
       }
-
       .node.is-edge-start circle {
         stroke: #0f766e;
         stroke-width: 5;
       }
-
       .node.has-item circle {
         filter: drop-shadow(0 0 10px rgba(255, 214, 10, 0.7));
       }
@@ -404,25 +267,12 @@
         word-break: break-all;
         min-height: 96px;
       }
-
       .history-meta {
         margin-top: 10px;
         color: var(--muted);
         line-height: 1.5;
       }
-
-      .status-box {
-        margin: 0 18px 14px;
-        padding: 10px 14px;
-        border-radius: 10px;
-        background: #eef4ed;
-        border: 1px solid #8fba8b;
-        color: #2c5e2e;
-        font-size: 13px;
-        line-height: 1.45;
-        word-break: break-all;
-        flex: 0 0 auto;
-      }
+      .status-box { display: none; }
 
       .app-toast {
         position: fixed;
@@ -442,115 +292,126 @@
         transition: opacity 180ms ease, transform 180ms ease;
         z-index: 1000;
       }
-
       .app-toast-visible {
         opacity: 1;
         transform: translate(-50%, 0);
       }
-
-      .app-toast-error {
-        background: #b3261e;
-      }
-
-      .app-toast-info {
-        background: #19324d;
-      }
+      .app-toast-error { background: #b3261e; }
+      .app-toast-info { background: #19324d; }
 
       @media (max-width: 1100px) {
         .layout {
           grid-template-columns: 1fr;
           height: auto;
           min-height: 100vh;
-          overflow-y: auto;
         }
-
-        .panel {
-          max-height: 60vh;
-        }
-
-        .graph-panel {
-          min-height: 480px;
-        }
+        .graph-wrap { min-height: 400px; }
       }
     </style>
   </head>
   <body>
     <div class="layout">
       <aside class="panel controls">
-        <div class="status-box" id="status-text">-</div>
-
         <div class="control-group">
-          <!-- <div class="stat-row">
-            <span class="stat-key">当前模式</span>
-            <strong id="mode-value">选择</strong>
-          </div> -->
           <div class="stat-row">
             <span class="stat-key">图规模</span>
             <strong id="graph-stats">0 个节点 / 0 条边</strong>
           </div>
-          <!-- <div class="stat-row">
-            <span class="stat-key">连边起点</span>
-            <strong id="edge-draft">起点: 未选择</strong>
-          </div> -->
         </div>
 
         <div class="control-group">
           <div class="tool-grid">
             <button data-mode-button="select" class="secondary">选择 `Esc/X`</button>
             <button data-mode-button="edge">连边 `E`</button>
-            <button data-mode-button="add-splitter">分流器 `1`</button>
-            <button data-mode-button="add-merger">汇流器 `2`</button>
-            <button data-mode-button="add-source" class="secondary">起点 `3`</button>
-            <button data-mode-button="add-sink" class="secondary">终点 `4`</button>
+            <button data-mode-button="add-S">S `1`</button>
+            <button data-mode-button="add-C">C `2`</button>
+            <button data-mode-button="add-In" class="secondary">In `3`</button>
+            <button data-mode-button="add-Out" class="secondary">Out `4`</button>
           </div>
         </div>
 
         <div class="control-group">
-          <div class="stat-row">
-            <span class="stat-key">当前帧</span>
-            <strong id="frame-value">0</strong>
+          <div class="solver-group">
+            <label class="stat-key" for="solver-model" style="font-size:13px">求解模型</label>
+            <select id="solver-model" style="width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:10px;background:white;color:var(--ink);font-size:13px">
+              <option value="milp">MILP (Z3, exact)</option>
+            </select>
+            <div class="solver-options" style="display:grid;gap:8px;margin-top:8px">
+              <div class="buttons">
+                <button id="solve-btn">求解</button>
+              </div>
+              <div id="three-state-controls">
+                <div class="buttons" style="margin-top:4px">
+                  <button id="flow-prev-btn" class="secondary">上一流量</button>
+                  <button id="flow-next-btn" class="secondary">下一流量</button>
+                </div>
+                <div class="buttons" style="margin-top:4px">
+                  <button id="state-prev-btn" class="secondary">上一状态</button>
+                  <button id="state-next-btn" class="secondary">下一状态</button>
+                </div>
+                <div class="stat-row">
+                  <span class="stat-key">当前流量</span>
+                  <strong id="flow-counter">0 / 0</strong>
+                </div>
+                <div class="stat-row">
+                  <span class="stat-key">当前状态</span>
+                  <strong id="state-counter">0 / 0</strong>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
         <div class="control-group">
-          <label for="fps-input">每秒离散模拟帧数: <strong id="fps-value">100</strong></label>
-          <input id="fps-input" type="range" min="1" max="5000" value="100" />
-          <label class="checkbox-row" for="show-edge-flow-toggle">
-            <input id="show-edge-flow-toggle" type="checkbox" checked />
-            <span>显示所有边流量占比</span>
-          </label>
-          <div class="solver-group">
-            <label class="checkbox-row solver-toggle" for="continuous-solve-toggle">
-              <input id="continuous-solve-toggle" type="checkbox" checked />
-              <span>修改后使用<strong class="continuous-label">连续</strong>求解器</span>
-            </label>
-            <div class="solution-nav-row" id="solution-nav" style="display:none">
-              <button id="prev-solution-btn" class="secondary">◀</button>
-              <span id="solution-index">解 1 / 1</span>
-              <button id="next-solution-btn">▶</button>
+          <h2>离散仿真</h2>
+          <div class="solver-options" style="display:grid;gap:8px">
+            <div class="buttons">
+              <button id="sim-run-btn">运行仿真</button>
+              <button id="sim-play-btn" class="secondary">播放</button>
             </div>
-          </div>
-
-          <div class="solver-group">
-            <label class="checkbox-row solver-toggle" for="auto-solve-toggle">
-              <input id="auto-solve-toggle" type="checkbox" checked />
-              <span>修改后使用<strong class="discrete-label">离散</strong>求解器</span>
-            </label>
-            <div class="solver-options">
-              <label class="inline-input" for="auto-solve-frames">
-                <span>max_frames</span>
-                <input id="auto-solve-frames" type="number" min="1" step="1" value="" />
-              </label>
+            <div class="buttons">
+              <button id="sim-prev-btn" class="secondary">上一帧</button>
+              <button id="sim-next-btn" class="secondary">下一帧</button>
             </div>
+            <input id="sim-frame-slider" type="range" min="0" max="0" value="0" />
+            <div class="stat-row">
+              <span class="stat-key">当前帧</span>
+              <strong id="sim-frame-value">0 / 0</strong>
+            </div>
+            <div class="solver-options inline-row">
+              <div class="inline-input">
+                <span>播放帧率</span>
+                <input id="sim-fps" type="number" min="1" max="240" value="8" />
+              </div>
+              <div class="inline-input">
+                <span>最大帧数</span>
+                <input id="sim-auto-frames" type="number" min="1" value="5000" />
+              </div>
+            </div>
+            <div id="sim-status" style="font-size:13px;color:var(--muted);min-height:1.2em"></div>
           </div>
         </div>
 
         <div class="buttons">
-          <button id="play-btn">开始</button>
-          <button id="pause-btn" class="secondary">暂停</button>
-          <button id="step-btn">单步</button>
-          <button id="reset-btn" class="secondary">重置</button>
-          <button id="clear-btn" class="secondary" style="grid-column: span 2">清空</button>
+          <button id="clear-btn" class="secondary">清空</button>
+        </div>
+
+        <div class="control-group">
+          <h2>wg 格式导入/导出</h2>
+          <textarea id="wg-input" rows="5" placeholder='每行一条边 "from -> to"，例如 "S3_5 -> C3_2"（支持 # 注释）' style="width:100%;border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:white;color:var(--ink);font-family:Consolas,monospace;font-size:12px;resize:vertical"></textarea>
+          <div class="buttons" style="margin-top:8px">
+            <button id="wg-export-btn" class="secondary">导出 wg</button>
+<button id="wg-import-btn">导入 wg</button>
+<button id="wg-merge-btn" class="secondary">加入 wg</button>
+          </div>
+          <div id="wg-status" style="font-size:13px;color:var(--muted);min-height:1.2em"></div>
+        </div>
+
+        <div class="control-group">
+          <h2>导入枚举图</h2>
+          <textarea id="import-json-input" rows="5" placeholder='粘贴 JSON（枚举文件或 {nodes:[],edges:[]}）' style="width:100%;border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:white;color:var(--ink);font-family:Consolas,monospace;font-size:12px;resize:vertical"></textarea>
+          <button id="import-btn" onclick="(function(){var e=document.getElementById('import-json-input'),s=document.getElementById('import-status');if(!e||!e.value.trim()){if(s)s.textContent='请先粘贴JSON。';return}if(s)s.textContent='解析中...';try{var d=JSON.parse(e.value.trim()),g;if(Array.isArray(d.nodes)&&Array.isArray(d.edges))g=d;else if(d.graph&&Array.isArray(d.graph.nodes))g=d.graph;else if(d.ratios&&typeof d.ratios==='object'){var en=Object.values(d.ratios);if(en.length===0)throw Error('ratios为空');g=en[0].graph;if(!g)throw Error('ratios首条无graph字段')}else throw Error('格式不识别');if(!Array.isArray(g.nodes)||!Array.isArray(g.edges))throw Error('nodes/edges非数组');try{window._importGraph&&window._importGraph(g);if(s)s.textContent='已导入('+g.nodes.length+'节点/'+g.edges.length+'条边)'}catch(x){if(s)s.textContent='导入失败:'+x.message}}catch(x){if(s)s.textContent='解析失败:'+x.message}})();return false">导入</button>
+          <div id="import-status" style="font-size:13px;color:var(--muted);min-height:1.2em"></div>
         </div>
 
         <div class="control-group">
@@ -566,53 +427,80 @@
           <button id="load-btn" class="secondary">加载</button>
           <button id="rename-btn">重命名</button>
           <button id="delete-save-btn" class="secondary">删除存档</button>
-          <button id="export-btn" class="secondary" style="grid-column: span 2">导出 graph.txt</button>
-          <button id="import-btn" class="secondary" style="grid-column: span 2">导入 graph.txt</button>
         </div>
-        <input type="file" id="import-file-input" accept=".txt" style="display:none" />
       </aside>
 
       <main class="panel graph-panel">
-        <!-- <div class="graph-header">
-          <h2>图结构</h2>
-          <p class="subtitle">任意模式都可选中节点或边并删除；连边模式下先点起点再点终点。</p>
-        </div> -->
         <div class="graph-wrap">
-           <svg id="graph" viewBox="0 0 900 560" aria-label="TopoFlow graph"></svg>
+          <svg id="graph" viewBox="0 0 900 560" aria-label="Conveyor graph"></svg>
+        </div>
+        <button id="layout-toggle-btn" class="secondary" style="display:none;position:absolute;top:10px;left:10px;z-index:10;font-size:12px;padding:4px 10px;border-radius:8px">查看物理结构</button>
+        <div id="layout-overlay" style="display:none;position:absolute;inset:0;background:#fffdf7;z-index:5;overflow:hidden;box-sizing:border-box">
+          <iframe id="layout-frame" src="/layout-editor.html" style="width:100%;height:100%;border:none;display:block" title="物理布局预览"></iframe>
         </div>
       </main>
 
       <aside class="panel inspector">
-        <h2>对象统计</h2>
-        <div class="stat-row">
-          <span class="stat-key">对象</span>
-          <strong id="selected-node">merge1</strong>
+        <hr style="margin:0 0 14px;border:none;border-top:1px solid var(--line)" />
+        <h2>物理布局 (TopoFlow)</h2>
+        <div class="buttons">
+          <button id="layout-btn">计算物理布局</button>
         </div>
-        <div class="stat-row">
-          <span class="stat-key">类型</span>
-          <strong id="selected-type">merger</strong>
+        <div id="layout-status" style="font-size:13px;color:var(--muted);min-height:1.2em"></div>
+        <div class="buttons" style="margin-top:4px">
+          <button id="layout-export-btn" class="secondary">导出布局</button>
+          <button id="layout-import-btn" class="secondary">导入布局</button>
         </div>
-        <div class="stat-row">
-          <span class="stat-key">端点</span>
-          <strong id="selected-endpoints">-</strong>
+        <input id="layout-import-file" type="file" accept=".json" hidden />
+
+        <hr style="margin:14px 0;border:none;border-top:1px solid var(--line)" />
+        <h2>标准分流计算</h2>
+        <div class="buttons">
+          <input id="ratio-p" type="number" min="1" value="1" style="width:72px" placeholder="p" title="目标比例分子 p" />
+          <span style="color:var(--muted)">:</span>
+          <input id="ratio-q" type="number" min="2" value="3" style="width:72px" placeholder="q" title="目标比例分母 q" />
+          <button id="ratio-split-btn">解算比例二分</button>
         </div>
-        <div class="stat-row">
-          <span class="stat-key">持货</span>
-          <strong id="selected-item">0</strong>
+        <div id="ratio-status" style="font-size:13px;color:var(--muted);min-height:1.2em"></div>
+
+        <hr style="margin:14px 0;border:none;border-top:1px solid var(--line)" />
+        <h2>标准限流计算</h2>
+        <div class="buttons">
+          <input id="limit-p" type="number" min="1" value="5" style="width:72px" placeholder="p" title="目标限流比例分子 p（1/3 &lt; p/q &lt; 1/2）" />
+          <span style="color:var(--muted)">:</span>
+          <input id="limit-q" type="number" min="3" value="13" style="width:72px" placeholder="q" title="目标限流比例分母 q" />
+          <button id="limit-module-btn">解算限流模块</button>
         </div>
-        <div class="stat-row">
-          <span class="stat-key">流量占比</span>
-          <strong id="selected-ratio">0/1</strong>
+        <div id="limit-status" style="font-size:13px;color:var(--muted);min-height:1.2em"></div>
+
+        <hr style="margin:14px 0;border:none;border-top:1px solid var(--line)" />
+        <h2>精确构造 (p/q 阻塞流)</h2>
+        <div class="buttons">
+          <input id="construct-p" type="number" min="1" value="325" style="width:72px" placeholder="p" title="目标流量分子 p" />
+          <span style="color:var(--muted)">:</span>
+          <input id="construct-q" type="number" min="2" value="799" style="width:72px" placeholder="q" title="目标流量分母 q" />
+          <button id="construct-btn">构造</button>
         </div>
-        <div class="stat-row">
-          <span class="stat-key">后缀循环节长度</span>
-          <strong id="selected-cycle">0</strong>
+        <div class="solver-options inline-row" style="margin-top:8px">
+          <div class="inline-input">
+            <span>规约深度</span>
+            <input id="construct-depth" type="number" min="1" max="8" value="3" />
+          </div>
+          <div class="inline-input">
+            <span>优化</span>
+            <label class="checkbox-row" style="font-size:13px">
+              <input id="construct-optimize" type="checkbox" style="width:auto" /> 深搜
+            </label>
+            <label class="checkbox-row" style="font-size:13px">
+              <input id="construct-crosscheck" type="checkbox" style="width:auto" /> Rust 复核
+            </label>
+          </div>
         </div>
-        <div class="history-box" id="selected-history">(empty)</div>
-        <div class="history-meta" id="history-meta">显示最近 0 位 / 全长 0 位</div>
+        <div id="construct-status" style="font-size:13px;color:var(--muted);min-height:1.2em"></div>
+        <div id="construct-info" class="history-box" style="display:none;font-size:12px"></div>
       </aside>
     </div>
 
-    <script src="./src/app.js"></script>
+    <script src="./app.js?v=2"></script>
   </body>
 </html>

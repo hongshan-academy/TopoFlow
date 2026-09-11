@@ -1,0 +1,16 @@
+[package]
+name = "topoflow-native"
+version = "0.2.0"
+edition = "2024"
+
+[lib]
+name = "topoflow_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+z3 = { version = "0.12", features = ["static-link-z3"] }
+pyo3 = { version = "0.26", features = ["extension-module", "num-bigint"] }
+num-bigint = "0.4"
+num-rational = { version = "0.4", features = ["num-bigint"] }
+num-traits = "0.2"
+serde_json = "1"

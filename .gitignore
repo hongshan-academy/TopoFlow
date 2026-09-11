@@ -15,17 +15,33 @@ logs/
 # CodeGraph
 .codegraph
 
-# MyPy
+# MyPy / pytest / ruff
 .mypy_cache
+.pytest_cache
+.ruff_cache
+
+# Rust / maturin
+native/**/target/
+*.pyd
+*.so
+*.dylib
 
 # Graph
 graph
 
 # Output
 output
+outputs
+
+# TopoFlow-CLI runtime
+TopoFlow-CLI/sessions/
+TopoFlow-CLI/.sessions/
 
 # Versioned variants
 *_v2*
 
 # OpenCode
 .opencode
+
+# References
+refs/

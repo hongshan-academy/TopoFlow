@@ -1,51 +1,46 @@
 [project]
 name = "topoflow"
-version = "0.1.0"
-description = "GA-driven DAG topology optimization with MILP flow solver"
+version = "0.2.0"
+description = "Unified topology flow workbench: MILP/stable solvers, discrete simulation, exact constructor, and physical layout"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "pulp>=3.3.2",
     "fastapi>=0.115.0",
     "uvicorn>=0.30.0",
-    "tqdm>=4.69.1",
-    "highspy>=1.15.1",
-    "deap>=1.4.2",
-    "fraction>=2.2.0",
-    "mypy>=2.3.0",
-    "matplotlib>=3.11.1",
-    "scikit-learn>=1.5.0",
-    "torch>=2.5.0",
-    "torch-geometric>=2.6.0",
 ]
 
-[tool.mypy]
-exclude = ["\\.venv/"]
+[build-system]
+requires = ["maturin>=1.13,<2"]
+build-backend = "maturin"
+
+[tool.maturin]
+manifest-path = "native/Cargo.toml"
+module-name = "topoflow_native"
 
 [[tool.uv.index]]
 url = "https://mirrors.aliyun.com/pypi/simple"
 default = true
 
-[[tool.uv.index]]
-name = "pytorch-cu124"
-url = "https://download.pytorch.org/whl/cu124"
-explicit = true
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "mypy>=2.3.1",
+]
 
-[tool.uv.sources]
-torch = { index = "pytorch-cu124" }
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+
+[tool.mypy]
+exclude = ["\\.venv/"]
 
 [[tool.mypy.overrides]]
-module = ["pulp", "pulp.*"]
+module = ["topoflow_native"]
 ignore_missing_imports = true
-[[tool.mypy.overrides]]
-module = ["deap", "deap.*"]
-ignore_missing_imports = true
-[[tool.mypy.overrides]]
-module = ["matplotlib", "matplotlib.*"]
-ignore_missing_imports = true
-[[tool.mypy.overrides]]
-module = ["sklearn", "sklearn.*"]
-ignore_missing_imports = true
-[[tool.mypy.overrides]]
-module = ["torch", "torch.*", "torch_geometric", "torch_geometric.*"]
-ignore_missing_imports = true
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+stubPath = "typings"
+exclude = [".venv", "native", "**/__pycache__"]
