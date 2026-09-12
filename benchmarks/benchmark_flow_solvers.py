@@ -23,6 +23,10 @@ from constructor import boundary_flow, construct_fraction
 
 import topoflow_native
 
+from flow_service import approximate_fraction
+from graph import Graph
+from solver import solve as solve_milp
+
 
 @dataclass(frozen=True, slots=True)
 class Timing:
@@ -72,6 +76,7 @@ def main() -> int:
     )
     parser.add_argument("--max-iterations", type=int, default=100000)
     parser.add_argument("--tolerance", type=float, default=1e-10)
+    parser.add_argument("--workers", type=int, default=16)
     parser.add_argument("--output", type=Path, default=Path("output/rust_flow_benchmark.json"))
     args = parser.parse_args()
 
@@ -84,7 +89,7 @@ def main() -> int:
         extra.append((int(p), int(q)))
 
     targets = fraction_corpus(args.max_denominator, extra)
-    names = ("rust-rank-smt", "rust-stable-polynomial")
+    names = ("rust-rank-smt", "rust-karzanov", "python-milp")
     timings: dict[str, list[float]] = {name: [] for name in names}
     backend_counts: Counter[str] = Counter()
     mismatches: list[dict[str, object]] = []
@@ -101,8 +106,10 @@ def main() -> int:
         graphs += 1
 
         calls = {
-            "rust-rank-smt": lambda: topoflow_native.solve_rank_smt(edges),
-            "rust-stable-polynomial": lambda: topoflow_native.solve_stable_polynomial(
+            "rust-rank-smt": lambda: topoflow_native.solve_rank_smt(
+                edges, None, args.workers
+            ),
+            "rust-karzanov": lambda: topoflow_native.solve_karzanov(
                 edges, args.max_iterations, args.tolerance
             ),
         }
@@ -134,6 +141,23 @@ def main() -> int:
                 started = time.perf_counter()
                 call()
                 timings[name].append(time.perf_counter() - started)
+
+        try:
+            graph = Graph.from_text("\n".join(f"{u} -> {v}" for u, v in edges))
+            milp_result = solve_milp(graph, workers=args.workers)
+        except Exception as error:  # noqa: BLE001 - benchmark should keep going
+            mismatches.append({"target": f"{p}/{q}", "backend": "python-milp", "error": str(error)})
+            continue
+        if milp_result.status == "Optimal":
+            for edge_result, want in zip(milp_result.edges, expected_edges):
+                approx = approximate_fraction(edge_result.flow)
+                edge_total["python-milp"] += 1
+                if Fraction(approx["numerator"], approx["denominator"]) == want:
+                    edge_ok["python-milp"] += 1
+        for _ in range(args.repeats):
+            started = time.perf_counter()
+            solve_milp(graph, workers=args.workers)
+            timings["python-milp"].append(time.perf_counter() - started)
 
     rows = []
     for name in names:

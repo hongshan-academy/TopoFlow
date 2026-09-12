@@ -16,7 +16,7 @@ from .service.construction import (
     construct_fraction,
 )
 from .service.core import ConstructionCore
-from .verification.polynomial import PolynomialCheck, crosscheck_polynomial
+from .verification.karzanov import KarzanovCheck, crosscheck_karzanov
 
 __all__ = [
     "ConstructionCore",
@@ -24,15 +24,15 @@ __all__ = [
     "ConstructionTiming",
     "EdgeState",
     "FlowCertificate",
+    "KarzanovCheck",
     "PlannerStats",
-    "PolynomialCheck",
     "ReductionPlan",
     "ReductionPlanner",
     "ReductionRecipe",
     "TopologyCost",
     "boundary_flow",
     "construct_fraction",
-    "crosscheck_polynomial",
+    "crosscheck_karzanov",
     "full_certificate",
     "parallel_sum",
     "replace_fixed_edge",

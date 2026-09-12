@@ -1,10 +1,8 @@
 use std::cmp::{max, min};
 use std::collections::{BTreeMap, HashMap};
 
-use num_bigint::BigInt;
 use num_traits::{One, Zero};
 
-use crate::exact_lp;
 use crate::graph::{GraphData, Kind};
 use crate::{NativeFlowSolution, Rat, rat};
 
@@ -581,14 +579,11 @@ fn aggregate(
         b_ub.push(gap);
     }
 
-    let (status, solution) = exact_lp::solve_lp(&costs, &a_ub, &b_ub, &a_eq, &b_eq);
+    let (status, solution) = crate::z3_lp::solve_lp(&costs, &a_ub, &b_ub, &a_eq, &b_eq);
     match status {
-        exact_lp::LpStatus::Optimal => {}
-        exact_lp::LpStatus::Infeasible => {
+        crate::z3_lp::LpStatus::Optimal => {}
+        crate::z3_lp::LpStatus::Infeasible => {
             return Err("Appendix A linear program is infeasible".into())
-        }
-        exact_lp::LpStatus::Unbounded => {
-            return Err("Appendix A linear program is unbounded".into())
         }
     }
     let phi_values: Vec<Rat> = solution[..filled_left.len()].to_vec();
@@ -1174,6 +1169,7 @@ pub fn solve(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use num_bigint::BigInt;
 
     fn edges(raw: &[(&str, &str)]) -> Vec<(String, String)> {
         raw.iter()

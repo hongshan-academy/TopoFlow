@@ -95,7 +95,7 @@
     message: "选择模式下可选中、拖动和删除节点。",
     backendBusy: false,
     topologyLayout: null,
-    solverModel: "milp",
+    solverModel: "rust-karzanov",
     // 离散仿真
     simFrames: [],
     simFrame: 0,
@@ -116,6 +116,8 @@
     removeSave: document.getElementById("delete-save-btn"),
     solveBtn: document.getElementById("solve-btn"),
     solverModel: document.getElementById("solver-model"),
+    workersInput: document.getElementById("workers-input"),
+    workersRow: document.getElementById("workers-row"),
     threeStateControls: document.getElementById("three-state-controls"),
     flowPrevBtn: document.getElementById("flow-prev-btn"),
     flowNextBtn: document.getElementById("flow-next-btn"),
@@ -168,11 +170,16 @@
 
   // ── MILP 连续求解（多解） ──────────────────────────────────────
 
+  // 并行线程数（Karzanov 固定单线程，不受此值影响）
+  function currentWorkers() {
+    return clampInt(els.workersInput ? els.workersInput.value : 16, 1, 64, 16);
+  }
+
   async function apiSolveMilp(nodes, edges) {
     const resp = await fetch(`${API_BASE}/api/solve`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ nodes, edges }),
+      body: JSON.stringify({ nodes, edges, workers: currentWorkers() }),
     });
     if (!resp.ok) {
       let msg;
@@ -241,14 +248,14 @@
     render();
   }
 
-  // ── 流量求解（Rust 原生：rank-smt / stable） ───────────────────
+  // ── 流量求解（Rust 原生：rank-smt / karzanov） ───────────────────
 
   async function apiSolveNative(model, nodes, edges) {
     const engine = model.replace("rust-", "");
     const resp = await fetch(`${API_BASE}/api/solve`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ nodes, edges, engine }),
+      body: JSON.stringify({ nodes, edges, engine, workers: currentWorkers() }),
     });
     if (!resp.ok) {
       let msg;
@@ -305,6 +312,9 @@
     const kind = opt ? opt.dataset.kind : "milp";
     const isRust = kind === "rust";
     state.solverModel = els.solverModel.value;
+    if (els.workersRow) {
+      els.workersRow.style.display = state.solverModel === "rust-karzanov" ? "none" : "";
+    }
     if (els.threeStateControls) els.threeStateControls.style.display = isRust ? "none" : "";
     if (isRust) {
       state.flowGroups = [];
@@ -344,6 +354,7 @@
         requireBeltCell: !!opts.requireBeltCell,
         timeLimit: opts.timeLimit ?? 30.0,
         minGrid: opts.minGrid ?? 3,
+        workers: currentWorkers(),
       }),
     });
     if (!resp.ok) {

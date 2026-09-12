@@ -1,7 +1,7 @@
 [project]
 name = "topoflow"
 version = "0.2.0"
-description = "Unified topology flow workbench: MILP/stable solvers, discrete simulation, exact constructor, and physical layout"
+description = "Unified topology flow workbench: MILP/Karzanov solvers, discrete simulation, exact constructor, and physical layout"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [

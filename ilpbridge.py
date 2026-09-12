@@ -328,7 +328,7 @@ class Model:
     def maximize(self, expr: _LinearExpr) -> None:
         self._objective = {"dir": "max", "terms": _terms(expr)}
 
-    def spec(self, timeout_ms: int) -> dict[str, Any]:
+    def spec(self, timeout_ms: int, workers: int = 16) -> dict[str, Any]:
         constraints = []
         auxiliary_count = 0
         for constraint in self._constraints:
@@ -377,6 +377,7 @@ class Model:
             "table": self._tables,
             "hints": self._hints,
             "timeout_ms": timeout_ms,
+            "workers": workers,
         }
         if self._objective is not None:
             spec["objective"] = self._objective
@@ -399,11 +400,11 @@ def _linear_constraint(
 
 
 class Parameters:
-    """Accepted CP-SAT tuning knobs; the bridge honors only time limits."""
+    """Accepted CP-SAT tuning knobs; the bridge honors time limits and worker count."""
 
     def __init__(self) -> None:
         self.max_time_in_seconds = 300.0
-        self.num_search_workers = 1
+        self.num_search_workers = 16
         self.relative_gap_limit: float | None = None
         self.log_search_progress = False
         self.stop_after_first_solution = False
@@ -420,7 +421,9 @@ class Solver:
         del callback  # progress reporting is not available through the bridge
         timeout_ms = max(1, int(self.parameters.max_time_in_seconds * 1000))
         try:
-            self._result = _solve_spec(model.spec(timeout_ms))
+            self._result = _solve_spec(
+                model.spec(timeout_ms, self.parameters.num_search_workers)
+            )
         except InfeasibleError:
             return INFEASIBLE
         except TimeoutError:

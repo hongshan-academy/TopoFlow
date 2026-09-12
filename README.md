@@ -8,8 +8,8 @@
 - **图形编辑**：放置/连接 In、Out、S、C 节点，支持 WG 文本导入导出、JSON 存档、WASD 平移画布。
 - **流量求解**（全部基于唯一内嵌的 Z3 引擎，输出精确有理数）：
   - `MILP (Z3, exact)`：MILP 多解求解（`solver.py`，经 `ilpbridge.py` 调用 Z3）。
-  - `Rust - Z3 (rank-smt)`：基于 rank 的方法，SMT 辅助边状态搜索（`native/src/rank_smt.rs`）。
-  - `Rust - Karzanov (stable)`：Rust 原生稳定分配求解器，聚合 LP 由内置确定性精确单纯形求解（`native/src/exact_lp.rs`）。
+  - `rank-SMT (Z3, exact)`：基于 rank 的方法，SMT 辅助边状态搜索（`native/src/rank_smt.rs`）。
+  - `Karzanov (polynomial) (Z3, exact)`：Rust 原生 Karzanov 稳定分配求解器，聚合 LP 由 Z3 精确求解（`native/src/karzanov.rs`）。
   - 三种引擎统一由 `solver.py` 提供并共享同一个求解 API（`/api/solve`）。
 - **离散仿真**：逐帧回放传送带队列与节点占用（`simulator.py`，边容量 4）。
 - **标准限流计算**：按目标比例 `p/q` 构造标准限流模块，任意 `0 < p < q` 完备可构造，输出规约步骤与满秩流量解（可逐边校验，`constructor/`）。
@@ -20,7 +20,7 @@
 
 全项目只依赖一个求解引擎：**Z3**（静态编译进 Rust 扩展 `topoflow_native`，全项目共享一份编译产物）。
 
-- Rust 原生 `rank-smt` 直接使用 Z3；`stable` 的聚合 LP 由内置的确定性精确单纯形（`exact_lp.rs`）求解。
+- Rust 原生 `rank-smt` 直接使用 Z3；`karzanov` 的聚合 LP 同样由 Z3 精确求解。
 - Python 侧（MILP 引擎、限流模块的排列 MILP、物理布局模型）统一经 `ilpbridge.py` 调用
   `topoflow_native.solve_ilp_exact`。
 
@@ -69,7 +69,7 @@ uv run uvicorn server:app --port 8081 --host 127.0.0.1
 |---|---|---|
 | GET | `/api/config` | 仿真配置（最大帧数） |
 | GET | `/api/solvers` | 可用求解器列表 |
-| POST | `/api/solve` | 流量求解（`engine=milp` / `rank-smt` / `stable`，精确有理数输出） |
+| POST | `/api/solve` | 流量求解（`engine=milp` / `rank-smt` / `karzanov`，精确有理数输出） |
 | POST | `/api/simulate` | 离散事件仿真（返回逐帧状态） |
 | POST | `/api/ratio-split` | 标准分流模块生成 |
 | POST | `/api/limit-module` | 标准限流计算（任意 `p/q`，`constructor/`） |
@@ -84,13 +84,30 @@ uv run mypy .
 uvx pyright
 ```
 
+## 基准测试
+
+```powershell
+uv run python -m benchmarks.benchmark_flow_solvers
+```
+
+48 个精确证书图（所有 `q ≤ 12` 的既约 `p/q`，另加 `28/39`、`325/799`、`3020/3333`），
+每个后端各测 3 次（共 144 采样），逐边与证书精确比对：
+
+| 后端 | 总耗时 | 中位 | P95 | 边精确 |
+|---|---|---|---|---|
+| `rank-SMT (Z3, exact)` | 9.04 s | 37.6 ms | 210 ms | 658/658 |
+| `Karzanov (polynomial) (Z3, exact)` | 8.51 s | 49.3 ms | 123 ms | 658/658 |
+| `python-milp` | 33.68 s | 93.0 ms | 910 ms | 658/658 |
+
+0 处不匹配。`Karzanov` 的聚合 LP 由 Z3 精确求解（`native/src/z3_lp.rs`），固定单线程以保证结果可复现。
+
 ## 各部分来源（不分先后）
 
 | 部分 | 来源 |
 |---|---|
 | 网页编辑器、离散 simulator | @Fatal Error A1012 |
 | MILP 流量求解器（`solver.py`） | @madSUNitist |
-| Rust 原生 `rank_smt`、`stable_polynomial`（`native/`）流量求解器 | @恒星泰斗 |
+| Rust 原生 `rank_smt`、`karzanov`（`native/`）流量求解器 | @恒星泰斗 |
 | 标准限流计算（`constructor/`） | @Orirock @madSUNitist 等 |
 | 物理布局求解器（`layout/`） | @kokobird |
 | 标准术语与工具综合 | @jnk |

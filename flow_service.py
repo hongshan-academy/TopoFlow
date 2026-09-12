@@ -263,7 +263,7 @@ def _limit_node_type(name: str) -> str:
 def build_limit_module(p: int, q: int, optimize: bool, search_range: int,
                        reduction_depth: int, reduction_state_limit: int,
                        cross_check: bool) -> dict:
-    from constructor import boundary_flow, construct_fraction, crosscheck_polynomial
+    from constructor import boundary_flow, construct_fraction, crosscheck_karzanov
 
     result = construct_fraction(
         p, q,
@@ -329,7 +329,7 @@ def build_limit_module(p: int, q: int, optimize: bool, search_range: int,
     }
 
     if cross_check:
-        check = crosscheck_polynomial(cert, result.target)
+        check = crosscheck_karzanov(cert, result.target)
         info["crossCheck"] = {
             "backend": check.backend,
             "status": check.status,
@@ -401,13 +401,13 @@ def deduplicate_solutions(solutions: List[Dict[str, Any]]) -> List[Dict[str, Any
 
 
 def enumerate_solutions(
-    graph: Graph, req_edges: Sequence[EdgeLike]
+    graph: Graph, req_edges: Sequence[EdgeLike], workers: int = 16
 ) -> tuple[List[Dict[str, Any]], bool]:
     """Run the exact MILP repeatedly, excluding known solutions until none remain."""
     solutions: List[Dict[str, Any]] = []
     pending: List[List[bool]] = []
     proved_infeasible = False
-    flow = FlowModel(graph)
+    flow = FlowModel(graph, workers)
 
     for i in range(MAX_SOLUTIONS):
         for pattern in pending:

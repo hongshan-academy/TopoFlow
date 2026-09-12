@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .leaves.unit import DEFAULT_EXHAUSTION_PAIR_LIMIT
 from .service.construction import construct_fraction
-from .verification.polynomial import crosscheck_polynomial
+from .verification.karzanov import crosscheck_karzanov
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -56,7 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--cross-check",
         action="store_true",
-        help="finally verify the graph with the bundled Rust stable-polynomial solver",
+        help="finally verify the graph with the bundled Rust Karzanov solver",
     )
     parser.add_argument(
         "-v",
@@ -129,7 +129,7 @@ def main() -> None:
         )
         print(f"wrote {args.output.resolve()}")
     if args.cross_check:
-        checked = crosscheck_polynomial(certificate, result.target)
+        checked = crosscheck_karzanov(certificate, result.target)
         print(
             f"cross-check={checked.backend} status={checked.status} "
             f"flow={checked.flow} iterations={checked.iterations} "

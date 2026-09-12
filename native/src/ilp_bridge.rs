@@ -11,7 +11,7 @@ use num_traits::{ToPrimitive, Zero};
 use pyo3::prelude::*;
 use serde_json::{json, Value};
 use z3::ast::{Ast, Bool, Int, Real};
-use z3::{Config, Context, Optimize, SatResult};
+use z3::{Context, Optimize, SatResult};
 
 use crate::Rat;
 
@@ -34,7 +34,7 @@ fn parse_rat(raw: &str) -> Result<Rat, String> {
 
 /// Parses a Z3 numeral rendered in SMT-LIB style, e.g. `(/ 3 4)`, `(- 2)`,
 /// or a plain integer.
-fn parse_z3_numeral(raw: &str) -> Result<Rat, String> {
+pub(crate) fn parse_z3_numeral(raw: &str) -> Result<Rat, String> {
     fn integer(raw: &str) -> Result<BigInt, String> {
         let raw = raw.trim().strip_suffix(".0").unwrap_or(raw.trim());
         raw.parse::<BigInt>()
@@ -483,6 +483,7 @@ fn solve_ilp_exact(spec: &str) -> PyResult<String> {
         pyo3::exceptions::PyValueError::new_err(format!("invalid spec JSON: {error}"))
     })?;
     let timeout_ms = parsed.get("timeout_ms").and_then(Value::as_u64).unwrap_or(0);
+    let workers = parsed.get("workers").and_then(Value::as_u64).unwrap_or(16) as u32;
     let has_hints = parsed.get("hints").is_some();
     let has_objective = parsed
         .get("objective")
@@ -490,11 +491,7 @@ fn solve_ilp_exact(spec: &str) -> PyResult<String> {
 
     for attempt in 0..2 {
         let with_hints = attempt == 0 && has_hints;
-        let mut config = Config::new();
-        if timeout_ms > 0 {
-            config.set_param_value("timeout", &timeout_ms.to_string());
-        }
-        let ctx = Context::new(&config);
+        let ctx = crate::context_with_options(workers, timeout_ms);
         let (solver, objective) = match build(&ctx, &parsed, with_hints) {
             Ok(solver) => solver,
             Err(message) => {
@@ -554,6 +551,7 @@ pub fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use z3::Config;
 
     #[test]
     fn solves_a_small_ilp() {

@@ -1,4 +1,4 @@
-"""Independent verification with this package's Rust stable-polynomial backend."""
+"""Independent verification with this package's Rust Karzanov backend."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
-class PolynomialCheck:
+class KarzanovCheck:
     target: Fraction
     flow: Fraction
     backend: str
@@ -28,19 +28,19 @@ class PolynomialCheck:
     def require_exact(self) -> None:
         if not self.exact:
             raise RuntimeError(
-                f"polynomial cross-check disagrees: target={self.target} "
+                f"Karzanov cross-check disagrees: target={self.target} "
                 f"flow={self.flow} backend={self.backend} status={self.status}"
             )
 
 
-def crosscheck_polynomial(
+def crosscheck_karzanov(
     certificate: FlowCertificate,
     target: Fraction,
     *,
     max_iterations: int = 100_000,
     tolerance: float = 1e-10,
-) -> PolynomialCheck:
-    """Run the bundled Rust stable-polynomial backend after exact certification."""
+) -> KarzanovCheck:
+    """Run the bundled Rust Karzanov backend after exact certification."""
     started = perf_counter()
     errors = certificate.validation_errors()
     if errors:
@@ -54,12 +54,12 @@ def crosscheck_polynomial(
             "topoflow_native Rust extension is not installed; run `uv sync` to build it"
         ) from exc
     logger.info(
-        "polynomial cross-check start target=%s nodes=%d edges=%d",
+        "Karzanov cross-check start target=%s nodes=%d edges=%d",
         target,
         certificate.node_count,
         certificate.edge_count,
     )
-    native = _native.solve_stable_polynomial(
+    native = _native.solve_karzanov(
         list(certificate.edges), max_iterations, tolerance
     )
     try:
@@ -72,7 +72,7 @@ def crosscheck_polynomial(
             "topoflow_native is outdated and does not expose exact rational output; "
             "rebuild it with `uv sync`"
         ) from exc
-    result = PolynomialCheck(
+    result = KarzanovCheck(
         target=target,
         flow=flow,
         backend=str(native.backend),
@@ -82,7 +82,7 @@ def crosscheck_polynomial(
     )
     result.require_exact()
     logger.info(
-        "polynomial cross-check passed backend=%s iterations=%d flow=%s elapsed=%.3fs",
+        "Karzanov cross-check passed backend=%s iterations=%d flow=%s elapsed=%.3fs",
         result.backend,
         result.iterations,
         result.flow,

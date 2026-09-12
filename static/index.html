@@ -334,8 +334,19 @@
           <div class="solver-group">
             <label class="stat-key" for="solver-model" style="font-size:13px">求解模型</label>
             <select id="solver-model" style="width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:10px;background:white;color:var(--ink);font-size:13px">
-              <option value="milp">MILP (Z3, exact)</option>
+              <option value="rust-karzanov" data-kind="rust" selected>Karzanov (polynomial) (Z3, exact)</option>
+              <option value="rust-rank-smt" data-kind="rust">rank-SMT (Z3, exact)</option>
+              <option value="milp" data-kind="milp">MILP (Z3, exact)</option>
             </select>
+            <div id="workers-row">
+              <div class="stat-row" style="margin-top:8px">
+                <span class="stat-key" title="其他求解器使用的并行线程数；Karzanov 固定单线程，不受此值影响">Workers</span>
+                <input id="workers-input" type="number" min="1" max="64" step="1" value="16"
+                       title="其他求解器使用的并行线程数；Karzanov 固定单线程，不受此值影响"
+                       style="width:72px;padding:4px 8px;border:1px solid var(--line);border-radius:8px;text-align:right" />
+              </div>
+              <div style="font-size:11px;color:#8a8a8a;margin-top:4px">并行线程数；不影响 Karzanov（固定单线程）</div>
+            </div>
             <div class="solver-options" style="display:grid;gap:8px;margin-top:8px">
               <div class="buttons">
                 <button id="solve-btn">求解</button>

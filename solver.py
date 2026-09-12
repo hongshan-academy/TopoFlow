@@ -11,14 +11,16 @@ from graph import Graph
 
 from ilpbridge import FEASIBLE, INFEASIBLE, OPTIMAL, UNKNOWN, Model, Solver, _LinearExpr
 
-_ENGINE_KEYS = {"rank-smt", "stable"}
+_ENGINE_KEYS = {"rank-smt", "karzanov"}
 
 
 _MINGW_BIN = r"C:\msys64\ucrt64\bin"
 
 
-def solve_native(engine: str, nodes: List[dict], edges: List[dict]) -> dict:
-    """Exact rational solve through the Rust extension (rank-smt / stable)."""
+def solve_native(
+    engine: str, nodes: List[dict], edges: List[dict], workers: int = 16
+) -> dict:
+    """Exact rational solve through the Rust extension (rank-smt / karzanov)."""
     import os
 
     if os.name == "nt" and os.path.isdir(_MINGW_BIN):
@@ -45,9 +47,9 @@ def solve_native(engine: str, nodes: List[dict], edges: List[dict]) -> dict:
     }
     edge_pairs = [(renamed[e["from"]], renamed[e["to"]]) for e in edges]
     if engine == "rank-smt":
-        res = topoflow_native.solve_rank_smt(edge_pairs)
+        res = topoflow_native.solve_rank_smt(edge_pairs, None, workers)
     else:
-        res = topoflow_native.solve_stable_polynomial(edge_pairs, 10000, 1e-10)
+        res = topoflow_native.solve_karzanov(edge_pairs, 10000, 1e-10)
     numerators = [int(value) for value in res.flow_numerators]
     denominators = [int(value) for value in res.flow_denominators]
     total_numerator = int(res.total_numerator)
@@ -86,7 +88,7 @@ class FlowModel:
     same model instead of rebuilding it from scratch each time.
     """
 
-    def __init__(self, graph: Graph) -> None:
+    def __init__(self, graph: Graph, workers: int = 16) -> None:
         (
             nodes,
             edges,
@@ -217,6 +219,7 @@ class FlowModel:
         self.is_blocked = is_blocked
         self._solver = Solver()
         self._solver.parameters.max_time_in_seconds = 30.0
+        self._solver.parameters.num_search_workers = workers
 
     def add_exclusion_pattern(self, pattern: List[bool]) -> None:
         """Forbid the exact blocked/unblocked assignment described by ``pattern``."""
@@ -254,8 +257,9 @@ class FlowModel:
 def solve(
     graph: Graph,
     exclude_patterns: Optional[List[List[bool]]] = None,
+    workers: int = 16,
 ) -> SolverResult:
-    flow = FlowModel(graph)
+    flow = FlowModel(graph, workers)
     for pattern in exclude_patterns or []:
         flow.add_exclusion_pattern(pattern)
     return flow.solve()

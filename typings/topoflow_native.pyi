@@ -16,8 +16,9 @@ class NativeFlowSolution:
 def solve_rank_smt(
     edges: Sequence[tuple[str, str]],
     fixed_edges: Sequence[int] | None = ...,
+    workers: int = ...,
 ) -> NativeFlowSolution: ...
-def solve_stable_polynomial(
+def solve_karzanov(
     edges: Sequence[tuple[str, str]],
     max_iterations: int = ...,
     tolerance: float = ...,

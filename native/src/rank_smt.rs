@@ -1,6 +1,6 @@
 use num_traits::{FromPrimitive, One, ToPrimitive, Zero};
 use z3::ast::{Ast, Int, Real};
-use z3::{Config, Context, Optimize, SatResult};
+use z3::{Optimize, SatResult};
 
 use crate::graph::{GraphData, Kind};
 use crate::{NativeFlowSolution, Rat};
@@ -57,6 +57,7 @@ fn solve_exact(rows: Vec<(Vec<Rat>, Rat)>, variables: usize) -> Result<(Vec<Rat>
 pub fn solve(
     edges: Vec<(String, String)>,
     fixed_edges: Option<Vec<usize>>,
+    workers: u32,
 ) -> Result<NativeFlowSolution, String> {
     let graph = GraphData::new(edges)?;
     let m = graph.edges.len();
@@ -74,8 +75,7 @@ pub fn solve(
         }
     }
 
-    let cfg = Config::new();
-    let ctx = Context::new(&cfg);
+    let ctx = crate::context_with_threads(workers);
     let optimize = Optimize::new(&ctx);
 
     let zero = Real::from_real(&ctx, 0, 1);
@@ -338,7 +338,7 @@ pub fn solve(
     let source_edge = graph.outgoing[graph.source][0];
     let total = flows[source_edge].clone();
     Ok(NativeFlowSolution::from_fractions(
-        "rust-rank-smt-z3".into(),
+        "rust-rank-smt".into(),
         "Optimal".into(),
         true,
         flows,

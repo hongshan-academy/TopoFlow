@@ -3,7 +3,7 @@
 Endpoints
   - GET  /api/config          discrete simulation config
   - GET  /api/solvers         list of available solvers
-  - POST /api/solve           flow solving (engine = milp / rank-smt / stable)
+  - POST /api/solve           flow solving (engine = milp / rank-smt / karzanov)
   - POST /api/simulate        discrete-event simulation (frame replay)
   - POST /api/ratio-split     standard ratio-split module builder
   - POST /api/limit-module    standard limit-flow computation (constructor)
@@ -99,6 +99,7 @@ class SolveRequest(BaseModel):
     nodes: List[NodeModel]
     edges: List[EdgeModel]
     engine: str = "milp"
+    workers: int = 16
 
 
 class SimulateOptions(BaseModel):
@@ -134,6 +135,7 @@ class TopoflowLayoutRequest(BaseModel):
     require_belt_cell: bool = Field(default=True, validation_alias=AliasChoices("requireBeltCell", "require_belt_cell"))
     time_limit: float = Field(default=30.0, validation_alias=AliasChoices("timeLimit", "time_limit"))
     min_grid: int = Field(default=3, validation_alias=AliasChoices("minGrid", "min_grid"))
+    workers: int = 16
 
 
 # -- Common helpers ---------------------------------------------------------
@@ -184,7 +186,8 @@ def _convert_for_topoflow(nodes: list[dict], edges: list[dict]) -> dict:
 
 
 def _try_solve(adapter, topo_graph: dict, rows: int, cols: int,
-               require_cell: bool, time_limit: float) -> tuple[dict, int]:
+               require_cell: bool, time_limit: float,
+               workers: int = 16) -> tuple[dict, int]:
     mid = rows // 2
     adapted = adapter.adapt_topoflow(
         topo_graph,
@@ -201,7 +204,7 @@ def _try_solve(adapter, topo_graph: dict, rows: int, cols: int,
     solution, _label, route_length = adapter.solve_topoflow(
         adapted,
         time_limit=time_limit,
-        workers=4,
+        workers=workers,
         search_mode="balanced",
     )
     return solution, route_length
@@ -209,6 +212,7 @@ def _try_solve(adapter, topo_graph: dict, rows: int, cols: int,
 
 def _find_min_grid(adapter, topo_graph: dict, require_cell: bool,
                    time_limit: float, min_size: int,
+                   workers: int = 16,
                    progress_cb=None) -> tuple[int, int, dict, int] | None:
     n_internal = sum(1 for nid in topo_graph["nodes"]
                      if nid not in ("In", "Out"))
@@ -223,7 +227,7 @@ def _find_min_grid(adapter, topo_graph: dict, require_cell: bool,
             progress_cb(size, size)
         try:
             sol, route_length = _try_solve(adapter, topo_graph, size, size,
-                                           require_cell, time_limit)
+                                           require_cell, time_limit, workers)
             cur_r = cur_c = size
             break
         except adapter.SolveFailure:
@@ -251,7 +255,7 @@ def _find_min_grid(adapter, topo_graph: dict, require_cell: bool,
                 progress_cb(nr, nc)
             try:
                 s, rl = _try_solve(adapter, topo_graph, nr, nc, require_cell,
-                                   min(15.0, time_limit))
+                                   min(15.0, time_limit), workers)
                 cur_r, cur_c, cur_sol, cur_rl = nr, nc, s, rl
                 compressed = True
                 break
@@ -264,17 +268,17 @@ def _find_min_grid(adapter, topo_graph: dict, require_cell: bool,
 
 
 _SOLVERS: dict[str, dict] = {
+    "rust-karzanov": {
+        "label": "Karzanov (polynomial) (Z3, exact)",
+        "kind": "rust",
+    },
+    "rust-rank-smt": {
+        "label": "rank-SMT (Z3, exact)",
+        "kind": "rust",
+    },
     "milp": {
         "label": "MILP (Z3, exact)",
         "kind": "milp",
-    },
-    "rust-rank-smt": {
-        "label": "Rust - Z3 (rank-smt)",
-        "kind": "rust",
-    },
-    "rust-stable": {
-        "label": "Rust - Karzanov (stable)",
-        "kind": "rust",
     },
 }
 
@@ -302,7 +306,7 @@ async def api_solve(req: SolveRequest) -> Any:
             {"id": e.id, "from": e.from_, "to": e.to} for e in req.edges
         ]
         try:
-            native = await asyncio.to_thread(solve_native, engine, nodes, edges)
+            native = await asyncio.to_thread(solve_native, engine, nodes, edges, req.workers)
         except ValueError as e:
             return _error(str(e))
         except RuntimeError as e:
@@ -331,7 +335,7 @@ async def api_solve(req: SolveRequest) -> Any:
     logger.info("Edges: %s", edge_desc)
 
     solutions, proved_infeasible = await asyncio.to_thread(
-        enumerate_solutions, graph, req_edges
+        enumerate_solutions, graph, req_edges, req.workers
     )
     elapsed = time.perf_counter() - t0
 
@@ -486,7 +490,7 @@ async def api_topoflow_layout(req: TopoflowLayoutRequest):
         def progress(rows: int, cols: int):
             q.put({"type": "progress", "rows": rows, "cols": cols})
         result = _find_min_grid(adapter, topo_graph, req.require_belt_cell,
-                                req.time_limit, req.min_grid, progress)
+                                req.time_limit, req.min_grid, req.workers, progress)
         if result is None:
             q.put({"type": "result", "result": None})
         else:
