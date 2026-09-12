@@ -17,12 +17,21 @@ build-backend = "maturin"
 manifest-path = "native/Cargo.toml"
 module-name = "topoflow_native"
 
+[tool.uv]
+# Build in the project venv instead of uv's ephemeral build environment.
+# Z3's CMake caches the interpreter path (PYTHON_EXECUTABLE) under
+# native/target/; the ephemeral environment is deleted after each build,
+# which would poison the cache and break every later rebuild (MSB8066).
+# maturin is provided by the dev group and installed in phase one.
+no-build-isolation-package = ["topoflow"]
+
 [[tool.uv.index]]
 url = "https://mirrors.aliyun.com/pypi/simple"
 default = true
 
 [dependency-groups]
 dev = [
+    "maturin>=1.13,<2",
     "pytest>=8.3",
     "mypy>=2.3.1",
 ]

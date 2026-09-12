@@ -44,6 +44,54 @@ wget -qO- https://astral.sh/uv/install.sh | sh
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
+构建 Rust 原生扩展还需要 Rust 工具链与 LLVM/libclang（如已安装，请跳过）。
+
+**Rust**（Rust ≥ 1.85）
+
+Linux 和 macOS：
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+Windows：
+```powershell
+winget install -e --id Rustlang.Rustup
+```
+
+**LLVM / libclang**（bindgen 生成 Z3 绑定时需要）
+
+Windows：
+```powershell
+winget install -e --id LLVM.LLVM
+```
+
+默认安装到 `C:\Program Files\LLVM`，`server.ps1` 会自动设置 `LIBCLANG_PATH`；
+安装到其他位置时需要手动指定：
+```powershell
+$env:LIBCLANG_PATH = "<LLVM 安装目录>\bin"
+```
+
+macOS：
+```sh
+brew install llvm
+export LIBCLANG_PATH="$(brew --prefix llvm)/lib"
+```
+
+Debian / Ubuntu：
+```sh
+sudo apt-get install libclang-dev
+```
+
+Fedora：
+```sh
+sudo dnf install clang-devel
+```
+
+Arch Linux：
+```sh
+sudo pacman -S clang
+```
+
 ### 启动服务器
 
 **脚本启动**
@@ -60,8 +108,10 @@ uv sync
 uv run uvicorn server:app --port 8081 --host 127.0.0.1
 ```
 
-> Rust 扩展通过 maturin 构建，需要 Rust 工具链（edition 2024，Rust ≥ 1.85）与 LLVM/libclang。
-> 若 LLVM 安装在 `C:\Program Files\LLVM`，`server.ps1` 会自动设置 `LIBCLANG_PATH`。
+> Rust 扩展通过 maturin 构建，依赖见上方说明。`pyproject.toml` 中配置了
+> `no-build-isolation-package = ["topoflow"]`，构建将直接使用项目 `.venv` 的解释器，
+> 避免 uv 临时构建环境被回收后，Z3 的 CMake 缓存的 Python 路径失效导致重建失败
+> （maturin 由 dev 依赖组提供，`uv sync` 会先安装它再构建本项目）。
 
 ## API
 
