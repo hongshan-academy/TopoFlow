@@ -1,7 +1,7 @@
 # TopoFlow 综合工具
 
 拓扑流网络的一体化工作台：浏览器中可视化编辑图（In / Out / 分流器 S / 汇流器 C），
-调用多种流量求解器、离散事件仿真、精确构造与物理布局。
+调用多种流量求解器、离散事件仿真、标准限流计算与物理布局。
 
 ## 功能
 
@@ -10,9 +10,11 @@
   - `MILP (Z3, exact)`：MILP 多解求解（`solver.py`，经 `ilpbridge.py` 调用 Z3）。
   - `Rust - Z3 (rank-smt)`：基于 rank 的方法，SMT 辅助边状态搜索（`native/src/rank_smt.rs`）。
   - `Rust - Karzanov (stable)`：Rust 原生稳定分配求解器，聚合 LP 由内置确定性精确单纯形求解（`native/src/exact_lp.rs`）。
+  - 三种引擎统一由 `solver.py` 提供并共享同一个求解 API（`/api/solve`）。
 - **离散仿真**：逐帧回放传送带队列与节点占用（`simulator.py`，边容量 4）。
-- **精确构造**：按目标分数 `p/q` 精确构造阻塞流拓扑，输出规约步骤与满秩证书（`constructor/`）。
-- **模块生成**：标准分流模块（`p:q` 二分）；标准限流计算由精确构造直接替代。
+- **标准限流计算**：按目标比例 `p/q` 构造标准限流模块，任意 `0 < p < q` 完备可构造，
+  输出规约步骤与满秩证书（`constructor/`）。
+- **标准分流模块**：按 `p:q` 二分构造分流拓扑。
 - **物理布局**：内置布局求解器（Z3，经 `ilpbridge.py`）搜索最小可行网格并可视化（`layout/`）。
 
 ## 求解架构
@@ -20,7 +22,7 @@
 全项目只依赖一个求解引擎：**Z3**（静态编译进 Rust 扩展 `topoflow_native`，全项目共享一份编译产物）。
 
 - Rust 原生 `rank-smt` 直接使用 Z3；`stable` 的聚合 LP 由内置的确定性精确单纯形（`exact_lp.rs`）求解。
-- Python 侧（精确 MILP、构造器排列 MILP、物理布局模型）统一经 `ilpbridge.py` 调用
+- Python 侧（MILP 引擎、限流模块的排列 MILP、物理布局模型）统一经 `ilpbridge.py` 调用
   `topoflow_native.solve_ilp_exact`。
 
 ## 快速开始
@@ -68,11 +70,10 @@ uv run uvicorn server:app --port 8080 --host 127.0.0.1
 |---|---|---|
 | GET | `/api/config` | 仿真配置（最大帧数） |
 | GET | `/api/solvers` | 可用求解器列表 |
-| POST | `/api/solve` | MILP 多解求解 |
+| POST | `/api/solve` | 流量求解（`engine=milp` / `rank-smt` / `stable`，精确有理数输出） |
 | POST | `/api/simulate` | 离散事件仿真（返回逐帧状态） |
-| POST | `/api/solve-native` | Rust 原生求解（`engine=rank-smt` / `stable`，精确有理数输出） |
 | POST | `/api/ratio-split` | 标准分流模块生成 |
-| POST | `/api/construct` | 精确构造 `p/q` 阻塞流 |
+| POST | `/api/limit-module` | 标准限流计算（任意 `p/q`，`constructor/`） |
 | POST | `/api/topoflow-layout` | 物理布局（NDJSON 流式进度） |
 
 
@@ -91,6 +92,6 @@ uvx pyright
 | 网页编辑器、离散 simulator | @Fatal Error A1012 |
 | MILP 流量求解器（`solver.py`） | @madSUNitist |
 | Rust 原生 `rank_smt`、`stable_polynomial`（`native/`）流量求解器 | @恒星泰斗 |
-| 精确 `p/q` 构造（`constructor/`） | @Orirock @madSUNitist 等 |
+| 标准限流计算（`constructor/`） | @Orirock @madSUNitist 等 |
 | 物理布局求解器（`layout/`） | @kokobird |
 | 标准术语与工具综合 | @jnk |

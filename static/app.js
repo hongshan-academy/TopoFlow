@@ -158,14 +158,14 @@
     simFps: document.getElementById("sim-fps"),
     simAutoFrames: document.getElementById("sim-auto-frames"),
     simStatus: document.getElementById("sim-status"),
-    constructP: document.getElementById("construct-p"),
-    constructQ: document.getElementById("construct-q"),
-    constructBtn: document.getElementById("construct-btn"),
-    constructDepth: document.getElementById("construct-depth"),
-    constructOptimize: document.getElementById("construct-optimize"),
-    constructCrosscheck: document.getElementById("construct-crosscheck"),
-    constructStatus: document.getElementById("construct-status"),
-    constructInfo: document.getElementById("construct-info"),
+    limitP: document.getElementById("limit-p"),
+    limitQ: document.getElementById("limit-q"),
+    limitModuleBtn: document.getElementById("limit-module-btn"),
+    limitDepth: document.getElementById("limit-depth"),
+    limitOptimize: document.getElementById("limit-optimize"),
+    limitCrosscheck: document.getElementById("limit-crosscheck"),
+    limitStatus: document.getElementById("limit-status"),
+    limitInfo: document.getElementById("limit-info"),
   };
 
   // ── MILP 连续求解（多解） ──────────────────────────────────────
@@ -236,11 +236,11 @@
     render();
   }
 
-  // ── Rust 原生求解（高效，无三态，仅边流量） ─────────────────────
+  // ── 流量求解（Rust 原生：rank-smt / stable） ───────────────────
 
   async function apiSolveNative(model, nodes, edges) {
     const engine = model.replace("rust-", "");
-    const resp = await fetch(`${API_BASE}/api/solve-native`, {
+    const resp = await fetch(`${API_BASE}/api/solve`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ nodes, edges, engine }),
@@ -654,10 +654,10 @@
     return state.simFrames[state.simFrame] || null;
   }
 
-  // ── 精确构造（p/q 阻塞流） ─────────────────────────────────────
+  // ── 标准限流计算 ─────────────────────────────────────
 
-  async function apiConstruct(p, q, opts) {
-    const resp = await fetch(`${API_BASE}/api/construct`, {
+  async function apiLimitModule(p, q, opts) {
+    const resp = await fetch(`${API_BASE}/api/limit-module`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -675,44 +675,44 @@
     return resp.json();
   }
 
-  async function triggerConstruct() {
+  async function triggerLimitModule() {
     if (state.backendBusy) return;
-    const p = parseInt(els.constructP.value, 10);
-    const q = parseInt(els.constructQ.value, 10);
+    const p = parseInt(els.limitP.value, 10);
+    const q = parseInt(els.limitQ.value, 10);
     if (!Number.isInteger(p) || !Number.isInteger(q) || p <= 0 || q <= 0 || p >= q) {
-      els.constructStatus.textContent = "需满足 0 < p < q 的正整数";
+      els.limitStatus.textContent = "需满足 0 < p < q 的正整数";
       return;
     }
     state.backendBusy = true;
-    els.constructStatus.textContent = `正在构造 ${p}/${q}…`;
-    if (els.constructInfo) els.constructInfo.style.display = "none";
+    els.limitStatus.textContent = `正在解算限流 ${p}/${q}…`;
+    if (els.limitInfo) els.limitInfo.style.display = "none";
     try {
-      const data = await apiConstruct(p, q, {
-        optimize: els.constructOptimize.checked,
-        crossCheck: els.constructCrosscheck.checked,
-        reductionDepth: clampInt(els.constructDepth.value, 1, 8, 3),
+      const data = await apiLimitModule(p, q, {
+        optimize: els.limitOptimize.checked,
+        crossCheck: els.limitCrosscheck.checked,
+        reductionDepth: clampInt(els.limitDepth.value, 1, 8, 3),
       });
       if (!data.nodes || !data.nodes.length) {
-        els.constructStatus.textContent = data.error || "构造失败";
+        els.limitStatus.textContent = data.error || "解算失败";
         return;
       }
       window._importGraph({ nodes: data.nodes, edges: data.edges });
       const info = data.info || {};
       const cost = info.cost || {};
-      let text = `已构造 ${info.target}（策略 ${info.strategy}，${cost.nodes ?? "?"}节点/${cost.edges ?? "?"}边，rank ${info.rank}/${info.edgeCount}）`;
+      let text = `已生成限流模块 ${info.target}（策略 ${info.strategy}，${cost.nodes ?? "?"}节点/${cost.edges ?? "?"}边，rank ${info.rank}/${info.edgeCount}）`;
       if (info.crossCheck) {
         text += `｜Rust 复核 ${info.crossCheck.backend} ${info.crossCheck.status}`;
       }
-      els.constructStatus.textContent = text;
-      if (els.constructInfo) {
+      els.limitStatus.textContent = text;
+      if (els.limitInfo) {
         const steps = (info.steps || []).join(" | ");
-        els.constructInfo.textContent = `steps: ${steps}\nflow: ${info.flow}  fullRank: ${info.fullRank}`;
-        els.constructInfo.style.display = "block";
+        els.limitInfo.textContent = `steps: ${steps}\nflow: ${info.flow}  fullRank: ${info.fullRank}`;
+        els.limitInfo.style.display = "block";
       }
-      showToast(`精确构造完成: ${info.target}`, "info");
+      showToast(`限流模块已生成: ${info.target}`, "info");
     } catch (error) {
-      els.constructStatus.textContent = `构造失败: ${error.message}`;
-      showToast(`构造失败: ${error.message}`, "error");
+      els.limitStatus.textContent = `解算失败: ${error.message}`;
+      showToast(`解算失败: ${error.message}`, "error");
     } finally {
       state.backendBusy = false;
     }
@@ -843,8 +843,8 @@
       state.simFps = clampInt(els.simFps.value, 1, 240, 8);
     });
 
-    // 精确构造
-    els.constructBtn.addEventListener("click", triggerConstruct);
+    // 标准限流计算
+    els.limitModuleBtn.addEventListener("click", triggerLimitModule);
   }
 
   // ── 键盘事件 ──────────────────────────────────────────────────

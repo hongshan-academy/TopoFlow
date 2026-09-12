@@ -13,6 +13,72 @@ from graph import Graph
 
 from ilpbridge import FEASIBLE, INFEASIBLE, OPTIMAL, UNKNOWN, Model, Solver, _LinearExpr
 
+_ENGINE_KEYS = {"rank-smt", "stable"}
+
+
+_MINGW_BIN = r"C:\msys64\ucrt64\bin"
+
+
+def solve_native(engine: str, nodes: List[dict], edges: List[dict]) -> dict:
+    """Exact rational solve through the Rust extension (rank-smt / stable)."""
+    import os
+
+    if os.name == "nt" and os.path.isdir(_MINGW_BIN):
+        try:
+            os.add_dll_directory(_MINGW_BIN)
+        except OSError:
+            pass
+    try:
+        import topoflow_native
+    except ImportError as e:
+        raise RuntimeError(f"Rust 求解器不可用（{e}），请先运行 `uv sync` 构建扩展") from e
+
+    if engine not in _ENGINE_KEYS:
+        raise ValueError(f"未知求解引擎: {engine}")
+    in_count = sum(1 for n in nodes if n["type"] == "In")
+    out_count = sum(1 for n in nodes if n["type"] == "Out")
+    if in_count != 1:
+        raise ValueError(f"求解器仅支持单个输入节点，当前 {in_count} 个")
+    if out_count != 1:
+        raise ValueError(f"求解器仅支持单个输出节点，当前 {out_count} 个")
+    renamed = {
+        n["id"]: ("In" if n["type"] == "In" else "Out" if n["type"] == "Out" else n["id"])
+        for n in nodes
+    }
+    edge_pairs = [(renamed[e["from"]], renamed[e["to"]]) for e in edges]
+    if engine == "rank-smt":
+        res = topoflow_native.solve_rank_smt(edge_pairs)
+    else:
+        res = topoflow_native.solve_stable_polynomial(edge_pairs, 10000, 1e-10)
+    numerators = [int(value) for value in res.flow_numerators]
+    denominators = [int(value) for value in res.flow_denominators]
+    total_numerator = int(res.total_numerator)
+    total_denominator = int(res.total_denominator)
+    return {
+        "model": engine,
+        "backend": res.backend,
+        "status": res.status,
+        "feasible": res.feasible,
+        "totalFlow": res.total_flow,
+        "totalNumerator": total_numerator,
+        "totalDenominator": total_denominator,
+        "totalText": f"{total_numerator}/{total_denominator}",
+        "iterations": res.iterations,
+        "edgeFlows": [
+            {
+                "from": edge["from"],
+                "to": edge["to"],
+                "flow": float(value),
+                "numerator": numerator,
+                "denominator": denominator,
+                "text": f"{numerator}/{denominator}",
+            }
+            for edge, value, numerator, denominator in zip(
+                edges, res.flows, numerators, denominators
+            )
+        ],
+    }
+
 
 def solve(
     graph: Graph,

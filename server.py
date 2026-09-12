@@ -3,11 +3,10 @@
 Endpoints
   - GET  /api/config          discrete simulation config
   - GET  /api/solvers         list of available solvers
-  - POST /api/solve           MILP multi-solution solve (solver.py)
+  - POST /api/solve           flow solving (engine = milp / rank-smt / stable)
   - POST /api/simulate        discrete-event simulation (frame replay)
-  - POST /api/solve-native    Rust native solve (rank-smt / stable)
   - POST /api/ratio-split     standard ratio-split module builder
-  - POST /api/construct       exact p/q blocking-flow construction (constructor)
+  - POST /api/limit-module    standard limit-flow computation (constructor)
   - POST /api/topoflow-layout physical layout (layout / Z3 bridge, NDJSON stream)
 """
 
@@ -31,7 +30,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
-from solver import solve
+from solver import solve, solve_native
 from simulator import simulate_frames
 from graph import Graph
 from config import DEFAULT_CONFIG
@@ -128,6 +127,7 @@ class EdgeModel(BaseModel):
 class SolveRequest(BaseModel):
     nodes: List[NodeModel]
     edges: List[EdgeModel]
+    engine: str = "milp"
 
 
 class SimulateOptions(BaseModel):
@@ -140,7 +140,7 @@ class SimulateRequest(BaseModel):
     options: SimulateOptions = Field(default_factory=SimulateOptions)
 
 
-class ConstructRequest(BaseModel):
+class LimitModuleRequest(BaseModel):
     p: int
     q: int
     optimize: bool = False
@@ -508,73 +508,6 @@ def _build_ratio_graph(p: int, q: int, max_share: float | None = None) -> dict:
             "feedBack": t1, "total": N,
         },
     }
-
-
-
-# -- Rust native solver (topoflow_native) -----------------------------------
-_MINGW_BIN = r"C:\msys64\ucrt64\bin"
-
-
-def _import_native():
-    if os.name == "nt" and os.path.isdir(_MINGW_BIN):
-        try:
-            os.add_dll_directory(_MINGW_BIN)
-        except OSError:
-            pass
-    try:
-        import topoflow_native  # noqa: F401
-    except ImportError as e:
-        raise RuntimeError(f"Rust 求解器不可用（{e}），请先运行 `uv sync` 构建扩展") from e
-    return sys.modules["topoflow_native"]
-
-
-def _solve_rust(engine: str, nodes: list[dict], edges: list[dict]) -> dict:
-    tn = _import_native()
-    in_count = sum(1 for n in nodes if n["type"] == "In")
-    out_count = sum(1 for n in nodes if n["type"] == "Out")
-    if in_count != 1:
-        raise ValueError(f"Rust 求解器仅支持单个输入节点，当前 {in_count} 个")
-    if out_count != 1:
-        raise ValueError(f"Rust 求解器仅支持单个输出节点，当前 {out_count} 个")
-    renamed = {
-        n["id"]: ("In" if n["type"] == "In" else "Out" if n["type"] == "Out" else n["id"])
-        for n in nodes
-    }
-    edge_pairs = [(renamed[e["from"]], renamed[e["to"]]) for e in edges]
-    if engine == "rank-smt":
-        res = tn.solve_rank_smt(edge_pairs)
-    else:
-        res = tn.solve_stable_polynomial(edge_pairs, 10000, 1e-10)
-    numerators = [int(value) for value in res.flow_numerators]
-    denominators = [int(value) for value in res.flow_denominators]
-    total_numerator = int(res.total_numerator)
-    total_denominator = int(res.total_denominator)
-    return {
-        "model": f"rust-{engine}",
-        "backend": res.backend,
-        "status": res.status,
-        "feasible": res.feasible,
-        "totalFlow": res.total_flow,
-        "totalNumerator": total_numerator,
-        "totalDenominator": total_denominator,
-        "totalText": f"{total_numerator}/{total_denominator}",
-        "iterations": res.iterations,
-        "edgeFlows": [
-            {
-                "from": edge["from"],
-                "to": edge["to"],
-                "flow": float(value),
-                "numerator": numerator,
-                "denominator": denominator,
-                "text": f"{numerator}/{denominator}",
-            }
-            for edge, value, numerator, denominator in zip(
-                edges, res.flows, numerators, denominators
-            )
-        ],
-    }
-
-
 _SOLVERS: dict[str, dict] = {
     "milp": {
         "label": "MILP (Z3, exact)",
@@ -606,7 +539,16 @@ async def api_solvers():
 
 
 @app.post("/api/solve")
-def api_solve(req: SolveRequest) -> Dict[str, Any]:
+async def api_solve(req: SolveRequest) -> Any:
+    engine = req.engine or "milp"
+    if engine != "milp":
+        nodes = [n.model_dump() for n in req.nodes]
+        edges = [
+            {"id": e.id, "from": e.from_, "to": e.to} for e in req.edges
+        ]
+        native = await asyncio.to_thread(solve_native, engine, nodes, edges)
+        return JSONResponse(native)
+
     t0 = time.perf_counter()
     node_ids = {n.id for n in req.nodes}
 
@@ -794,21 +736,7 @@ async def api_ratio_split(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@app.post("/api/solve-native")
-async def api_solve_native(request: Request):
-    body = await request.json()
-    nodes, edges = _raw_graph_from_body(body)
-    engine = body.get("engine", "rank-smt")
-    if engine not in ("rank-smt", "stable"):
-        return JSONResponse({"error": f"未知 Rust 求解器: {engine}"}, status_code=400)
-    try:
-        result = await asyncio.to_thread(_solve_rust, engine, nodes, edges)
-        return JSONResponse(result)
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-
-def _constructor_node_type(name: str) -> str:
+def _limit_node_type(name: str) -> str:
     if name == "In":
         return "In"
     if name == "Out":
@@ -820,7 +748,7 @@ def _constructor_node_type(name: str) -> str:
     raise ValueError(f"未知构造节点: {name}")
 
 
-def _build_construction(p: int, q: int, optimize: bool, search_range: int,
+def _build_limit_module(p: int, q: int, optimize: bool, search_range: int,
                         reduction_depth: int, reduction_state_limit: int,
                         cross_check: bool) -> dict:
     from constructor import boundary_flow, construct_fraction, crosscheck_polynomial
@@ -839,7 +767,7 @@ def _build_construction(p: int, q: int, optimize: bool, search_range: int,
     for u, v in cert.edges:
         for name in (u, v):
             if name not in node_type:
-                node_type[name] = _constructor_node_type(name)
+                node_type[name] = _limit_node_type(name)
                 nodes.append({"id": name, "type": node_type[name]})
 
     edges: List[Dict[str, Any]] = [
@@ -901,18 +829,18 @@ def _build_construction(p: int, q: int, optimize: bool, search_range: int,
     return {"nodes": nodes, "edges": edges, "edgeFlows": edge_flows, "info": info}
 
 
-@app.post("/api/construct")
-async def api_construct(req: ConstructRequest):
+@app.post("/api/limit-module")
+async def api_limit_module(req: LimitModuleRequest):
     if not (0 < req.p < req.q):
         return JSONResponse({"error": "需满足 0 < p < q"}, status_code=400)
     try:
         graph = await asyncio.to_thread(
-            _build_construction, req.p, req.q, req.optimize, req.search_range,
+            _build_limit_module, req.p, req.q, req.optimize, req.search_range,
             req.reduction_depth, req.reduction_state_limit, req.cross_check,
         )
         return JSONResponse(graph)
     except Exception as e:
-        logger.exception("construct failed")
+        logger.exception("limit-module failed")
         return JSONResponse({"error": str(e)}, status_code=500)
 
 

@@ -464,30 +464,30 @@
         <div id="ratio-status" style="font-size:13px;color:var(--muted);min-height:1.2em"></div>
 
         <hr style="margin:14px 0;border:none;border-top:1px solid var(--line)" />
-        <h2>精确构造 (p/q 阻塞流)</h2>
+        <h2>标准限流计算</h2>
         <div class="buttons">
-          <input id="construct-p" type="number" min="1" value="325" style="width:72px" placeholder="p" title="目标流量分子 p" />
+          <input id="limit-p" type="number" min="1" value="325" style="width:72px" placeholder="p" title="目标限流比例分子 p" />
           <span style="color:var(--muted)">:</span>
-          <input id="construct-q" type="number" min="2" value="799" style="width:72px" placeholder="q" title="目标流量分母 q" />
-          <button id="construct-btn">构造</button>
+          <input id="limit-q" type="number" min="2" value="799" style="width:72px" placeholder="q" title="目标限流比例分母 q" />
+          <button id="limit-module-btn">解算限流模块</button>
         </div>
         <div class="solver-options inline-row" style="margin-top:8px">
           <div class="inline-input">
             <span>规约深度</span>
-            <input id="construct-depth" type="number" min="1" max="8" value="3" />
+            <input id="limit-depth" type="number" min="1" max="8" value="3" />
           </div>
           <div class="inline-input">
             <span>优化</span>
             <label class="checkbox-row" style="font-size:13px">
-              <input id="construct-optimize" type="checkbox" style="width:auto" /> 深搜
+              <input id="limit-optimize" type="checkbox" style="width:auto" /> 深搜
             </label>
             <label class="checkbox-row" style="font-size:13px">
-              <input id="construct-crosscheck" type="checkbox" style="width:auto" /> Rust 复核
+              <input id="limit-crosscheck" type="checkbox" style="width:auto" /> Rust 复核
             </label>
           </div>
         </div>
-        <div id="construct-status" style="font-size:13px;color:var(--muted);min-height:1.2em"></div>
-        <div id="construct-info" class="history-box" style="display:none;font-size:12px"></div>
+        <div id="limit-status" style="font-size:13px;color:var(--muted);min-height:1.2em"></div>
+        <div id="limit-info" class="history-box" style="display:none;font-size:12px"></div>
       </aside>
     </div>
 
