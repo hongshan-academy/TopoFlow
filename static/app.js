@@ -1078,8 +1078,8 @@
     const node = {
       id: nextId(type),
       type,
-      x: clamp(point.x, GRAPH_BOUNDS.padding, GRAPH_BOUNDS.width - GRAPH_BOUNDS.padding),
-      y: clamp(point.y, GRAPH_BOUNDS.padding, GRAPH_BOUNDS.height - GRAPH_BOUNDS.padding),
+      x: point.x,
+      y: point.y,
     };
     state.graph.nodes.push(node);
     state.selected = { kind: "node", id: node.id };
@@ -1089,8 +1089,8 @@
 
   function moveNode(nodeId, point) {
     const node = getNode(nodeId);
-    node.x = clamp(point.x, GRAPH_BOUNDS.padding, GRAPH_BOUNDS.width - GRAPH_BOUNDS.padding);
-    node.y = clamp(point.y, GRAPH_BOUNDS.padding, GRAPH_BOUNDS.height - GRAPH_BOUNDS.padding);
+    node.x = point.x;
+    node.y = point.y;
   }
 
   function deleteSelectedObject() {
@@ -1290,7 +1290,6 @@
           <path d="M0,0 L0,6 L9,3 z" fill="#667085"></path>
         </marker>
       </defs>
-      <rect class="graph-boundary" x="0" y="0" width="${GRAPH_BOUNDS.width}" height="${GRAPH_BOUNDS.height}"></rect>
       <g class="edges">${edgesMarkup.join("")}${draftMarkup}</g>
       <g class="nodes">${nodesMarkup.join("")}</g>
     `;
