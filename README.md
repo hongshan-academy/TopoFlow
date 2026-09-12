@@ -13,7 +13,7 @@
   - 三种引擎统一由 `solver.py` 提供并共享同一个求解 API（`/api/solve`）。
 - **离散仿真**：逐帧回放传送带队列与节点占用（`simulator.py`，边容量 4）。
 - **标准限流计算**：按目标比例 `p/q` 构造标准限流模块，任意 `0 < p < q` 完备可构造，
-  输出规约步骤与满秩证书（`constructor/`）。
+  输出规约步骤与满秩流量解（可逐边校验，`constructor/`）。
 - **标准分流模块**：按 `p:q` 二分构造分流拓扑。
 - **物理布局**：内置布局求解器（Z3，经 `ilpbridge.py`）搜索最小可行网格并可视化（`layout/`）。
 
@@ -56,7 +56,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 
 **手动启动**
 
-```powershell
+```sh
 uv sync
 uv run uvicorn server:app --port 8080 --host 127.0.0.1
 ```
