@@ -89,7 +89,7 @@ def main() -> int:
         extra.append((int(p), int(q)))
 
     targets = fraction_corpus(args.max_denominator, extra)
-    names = ("rust-rank-smt", "rust-karzanov", "python-milp")
+    names = ("rust-karzanov", "rust-rank-smt", "python-milp")
     timings: dict[str, list[float]] = {name: [] for name in names}
     backend_counts: Counter[str] = Counter()
     mismatches: list[dict[str, object]] = []
@@ -106,11 +106,11 @@ def main() -> int:
         graphs += 1
 
         calls = {
-            "rust-rank-smt": lambda: topoflow_native.solve_rank_smt(
-                edges, None, args.workers
-            ),
             "rust-karzanov": lambda: topoflow_native.solve_karzanov(
                 edges, args.max_iterations, args.tolerance
+            ),
+            "rust-rank-smt": lambda: topoflow_native.solve_rank_smt(
+                edges, None, args.workers
             ),
         }
         for name, call in calls.items():

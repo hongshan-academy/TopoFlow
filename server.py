@@ -3,7 +3,7 @@
 Endpoints
   - GET  /api/config          discrete simulation config
   - GET  /api/solvers         list of available solvers
-  - POST /api/solve           flow solving (engine = milp / rank-smt / karzanov)
+  - POST /api/solve           flow solving (engine = karzanov / rank-smt / milp)
   - POST /api/simulate        discrete-event simulation (frame replay)
   - POST /api/ratio-split     standard ratio-split module builder
   - POST /api/limit-module    standard limit-flow computation (constructor)

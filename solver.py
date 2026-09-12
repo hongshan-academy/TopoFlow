@@ -20,7 +20,7 @@ _MINGW_BIN = r"C:\msys64\ucrt64\bin"
 def solve_native(
     engine: str, nodes: List[dict], edges: List[dict], workers: int = 16
 ) -> dict:
-    """Exact rational solve through the Rust extension (rank-smt / karzanov)."""
+    """Exact rational solve through the Rust extension (karzanov / rank-smt)."""
     import os
 
     if os.name == "nt" and os.path.isdir(_MINGW_BIN):

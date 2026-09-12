@@ -248,7 +248,7 @@
     render();
   }
 
-  // ── 流量求解（Rust 原生：rank-smt / karzanov） ───────────────────
+  // ── 流量求解（Rust 原生：karzanov / rank-smt） ───────────────────
 
   async function apiSolveNative(model, nodes, edges) {
     const engine = model.replace("rust-", "");
@@ -469,7 +469,7 @@
   let layoutFrameLoaded = false;
   let layoutPendingMeta = null;
 
-  /** 通过 postMessage 把物理解注入 iframe 内的 editor.html 渲染器。 */
+  /** 通过 postMessage 把物理布局结果注入 iframe 内的 editor.html 渲染器。 */
   function postLayoutToFrame(meta) {
     els.layoutFrame.contentWindow.postMessage(
       { kind: "topoflow-layout", solution: meta.solution, fileName: "物理布局" },
@@ -834,7 +834,7 @@
     els.layoutImportFile.addEventListener("change", handleLayoutImportFile);
     // 给预览页加版本参数，绕过浏览器对旧版 layout-editor.html 的缓存
     els.layoutFrame.src = `/layout-editor.html?v=${Date.now()}`;
-    // 等 iframe 内预览页加载完成后，注入缓存的物理解
+    // 等 iframe 内预览页加载完成后，注入缓存的物理布局结果
     els.layoutFrame.addEventListener("load", () => {
       layoutFrameLoaded = true;
       if (layoutPendingMeta) {
@@ -912,7 +912,7 @@
     if (panRaf) return;
     let last = performance.now();
     const loop = (now) => {
-      // dt 按 60fps 归一，保证不同帧率下速度一致
+      // dt 按 60fps 折算，保证不同帧率下速度一致
       const dt = Math.min((now - last) / (1000 / 60), 3);
       last = now;
       let dx = 0, dy = 0;
@@ -1715,7 +1715,7 @@
       return;
     }
     if (state.graph.edges.length === 0 && state.graph.nodes.length === 0) {
-      // 空图退化为直接导入
+      // 空图直接导入
       window._importGraph(parsed);
       els.wgStatus.textContent =
         `当前图为空，已直接导入（${parsed.nodes.length}节点 / ${parsed.edges.length}条边）`;

@@ -396,7 +396,7 @@
       aside.right { position: fixed; z-index: 20; right: 0; top: 70px; bottom: 30px; width: 290px; box-shadow: -20px 0 50px rgba(0,0,0,.35); }
       .header-actions .hide-small { display: none; }
     }
-    /* ── 预览模式：仅保留物理解预览画布，隐藏其余控制 UI（供主工具 iframe 复用） ── */
+    /* ── 预览模式：仅保留物理布局结果预览画布，隐藏其余控制 UI（供主工具 iframe 复用） ── */
     body.preview .app { grid-template-rows: 0 minmax(0, 1fr) 0 !important; }
     body.preview header, body.preview footer { display: none !important; }
     /* header/footer 隐藏后不占轨道，必须把 main 显式放进第 2 行，否则高度塌陷为 0 */
@@ -526,7 +526,7 @@
           <div class="command-tooltip" id="command-params-tip" role="tooltip">
             <strong>交互式总控台</strong>
             <div class="command-tip-row"><span>启动</span><code>python cli.py</code></div>
-            <div class="command-tip-row"><span>会话</span><code>每个会话独立保存输入、候选、物理解和验证报告</code></div>
+            <div class="command-tip-row"><span>会话</span><code>每个会话独立保存输入、候选、物理布局结果和验证报告</code></div>
             <div class="command-tip-row"><span>导入</span><code>启动后选择“导入 GA 结果或布局请求”</code></div>
           </div>
         </div>
@@ -733,7 +733,7 @@
       if (topoflow.terminals?.In && topoflow.terminals?.Out) state.terminals = deepCopy(topoflow.terminals);
       const search = topoflow.grid_search;
       if (search) state.expansion = { sizingMode: search.mode || "compact", compactCandidates: search.candidateLimit || 6, enabled: !!search.enabled, step: search.step || 1, maxRows: search.maxRows || search.maximumGrid?.rows || state.rows, maxColumns: search.maxColumns || search.maximumGrid?.columns || state.columns };
-      toast("已返回物理解");
+      toast("已返回物理布局结果");
     }
     normalizeTerminal("In"); normalizeTerminal("Out"); normalizeExpansion(); syncControls(); renderAll();
   }
@@ -798,7 +798,7 @@
       }
       if (object.topoflow.terminals && Object.keys(object.topoflow.terminals).length) state.terminals = deepCopy(object.topoflow.terminals);
       state.sourceName = fileName; normalizeTerminal("In"); normalizeTerminal("Out"); normalizeExpansion();
-      toast("已载入物理解预览");
+      toast("已载入物理布局结果预览");
     } else {
       const parsed = selectedResultFrom(object, 1);
       state.results = parsed.list; state.selected = parsed.selected; state.graph = parsed.graph;
@@ -1289,7 +1289,7 @@
     const nodes = state.graph?.nodes || []; const edges = state.graph?.edges || [];
     $("#graph-stats").textContent = `${nodes.length} nodes / ${edges.length} edges`;
     $("#mode-label").textContent = state.solution
-      ? (isSolutionView() ? "物理解预览 · 端口与路径来自 CP-SAT" : `原设计回看 · 拖动元件仅调整预览${dimensions.expanded ? " · 放不下的元件显示在网格外" : ""}`)
+      ? (isSolutionView() ? "物理布局结果预览 · 端口与路径来自 CP-SAT" : `原设计回看 · 拖动元件仅调整预览${dimensions.expanded ? " · 放不下的元件显示在网格外" : ""}`)
       : `逻辑拓扑预览 · 元件可拖动（仅视觉）${dimensions.expanded ? " · 放不下的元件显示在网格外" : ""} · IN / OUT 设置边界`;
     $("#source-name").textContent = state.sourceName;
     const target = state.selected?.target;
@@ -1330,7 +1330,7 @@
     $("#min-splitter-merger-belt-input").disabled = reviewOnly || state.transport !== "belt";
     $$('[data-side], [data-offset]').forEach(input => { input.disabled = reviewOnly; });
     const reviewButton = $("#review-design-btn"); reviewButton.hidden = !state.solution;
-    reviewButton.textContent = isSolutionView() ? "查看原设计" : "返回物理解";
+    reviewButton.textContent = isSolutionView() ? "查看原设计" : "返回物理布局结果";
     for (const terminal of ["In", "Out"]) {
       $(`[data-side="${terminal}"]`).value = state.terminals[terminal].side;
       const input = $(`[data-offset="${terminal}"]`); input.value = state.terminals[terminal].offset + 1; input.min = 1; input.max = terminalLimit(terminal);
@@ -1497,7 +1497,7 @@
     if (!session || session.schema !== "topoflow-workflow-session/v1") throw new Error("不是有效的 TopoFlow Session");
     const artifacts = session.artifacts || {};
     const choices = [
-      ["physical", sessionArtifactPath(artifacts.physical, "physical/solution.json"), "物理解"],
+      ["physical", sessionArtifactPath(artifacts.physical, "physical/solution.json"), "物理布局结果"],
       ["analysis", sessionArtifactPath(artifacts.analysis, "discrete/analysis.json"), "离散分析"],
       ["input", sessionArtifactPath(artifacts.input, "input/original.json"), "原始输入"]
     ];
@@ -1512,7 +1512,7 @@
         if (error?.name !== "NotFoundError") throw error;
       }
     }
-    if (!loaded) throw new Error("Session 中没有可读取的物理解、离散分析或原始输入");
+    if (!loaded) throw new Error("Session 中没有可读取的物理布局结果、离散分析或原始输入");
     applySessionConfig(session);
     loadObject(loaded.object, `${session.name || "Session"} · ${loaded.label}`);
     if (loaded.kind !== "physical") applySessionConfig(session);
@@ -1646,7 +1646,7 @@
 
   restoreSettings(); normalizeExpansion(); bindEvents(); syncControls(); renderAll();
 
-  // 支持父页面通过 postMessage 注入物理解预览（供 iframe 复用本渲染器）
+  // 支持父页面通过 postMessage 注入物理布局结果预览（供 iframe 复用本渲染器）
   window.addEventListener("message", (event) => {
     const data = event.data;
     if (data && data.kind === "topoflow-layout" && data.solution) {
