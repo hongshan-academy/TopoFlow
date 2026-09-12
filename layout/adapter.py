@@ -37,11 +37,6 @@ EXPECTED_DEGREES = {
 FAMILY_BY_DEGREE = {degree: family for family, degree in EXPECTED_DEGREES.items()}
 TRANSPORT_KINDS = {"belt": 1, "pipe": 2}
 TERMINAL_DIRECTIONS = {"bottom": 0, "right": 1, "top": 2, "left": 3}
-IncumbentCallback = Callable[[int, float, float, float], None]
-IncumbentSolutionCallback = Callable[
-    [dict[str, object], int, float, float, float],
-    None,
-]
 LayoutHintCallback = Callable[[dict[str, object]], None]
 LAYOUT_HINT_SCHEMA = "topoflow-facility-layout-hint/v1"
 SEARCH_MODES = {"fast", "balanced", "optimal"}
@@ -109,20 +104,6 @@ class NodeTypeMismatchError(ValueError):
             f"{first.node} must have degree {first.expected_degree}, "
             f"got {first.actual_degree}; {len(mismatches)} node type(s) can be inferred from degree"
         )
-
-
-def enable_degree_type_inference(raw: object, rank: int = 1) -> None:
-    source = raw
-    if isinstance(raw, dict) and raw.get("schema") == LAYOUT_REQUEST_SCHEMA:
-        source = raw.get("topoflow")
-        request_rank = raw.get("rank", rank)
-        if isinstance(request_rank, int) and not isinstance(request_rank, bool):
-            rank = request_rank
-    _, graph = _select_result(source, rank)
-    nodes, edges = _parse_graph(graph)
-    families = _validate_topology(nodes, edges, infer_types_from_degrees=True)
-    graph["inferNodeTypesFromDegrees"] = True
-    graph["nodeTypes"] = families
 
 
 def _select_result(raw: object, rank: int) -> tuple[dict[str, object], dict[str, object]]:
@@ -1061,173 +1042,6 @@ def solve_facility_placement(
     }
 
 
-def estimate_compact_layout(
-    adapted: AdaptedTopoFlowProblem,
-    cp_model: Any,
-    *,
-    time_limit: float,
-    workers: int,
-    prior_hint: Mapping[str, object] | None = None,
-    debug: bool = False,
-) -> dict[str, object] | None:
-    """Estimate a compact grid before constructing any routing variables."""
-    if time_limit <= 0:
-        raise ValueError("compact estimate time_limit must be positive")
-    model = cp_model.CpModel()
-    max_rows = adapted.problem.rows
-    max_columns = adapted.problem.columns
-    facility_count = len(adapted.problem.facilities)
-    used_rows = model.new_int_var(1, max_rows, "compact_used_rows")
-    used_columns = model.new_int_var(1, max_columns, "compact_used_columns")
-    rows: list[Any] = []
-    columns: list[Any] = []
-    cells: list[Any] = []
-    for facility_id in range(facility_count):
-        row = model.new_int_var(0, max_rows - 1, f"compact_{facility_id}_row")
-        column = model.new_int_var(0, max_columns - 1, f"compact_{facility_id}_column")
-        cell = model.new_int_var(
-            0,
-            max_rows * max_columns - 1,
-            f"compact_{facility_id}_cell",
-        )
-        model.add(row < used_rows)
-        model.add(column < used_columns)
-        model.add(cell == row * max_columns + column)
-        rows.append(row)
-        columns.append(column)
-        cells.append(cell)
-    model.add_all_different(cells)
-
-    for edge in adapted.external_edges:
-        terminal = "In" if edge.source == "In" else "Out"
-        anchor = adapted.terminal_anchors.get(terminal)
-        if anchor is None:
-            continue
-        node = edge.target if terminal == "In" else edge.source
-        facility_id = adapted.node_to_facility[node]
-        if anchor.side == "left":
-            model.add(rows[facility_id] == anchor.offset)
-            model.add(columns[facility_id] == 0)
-        elif anchor.side == "right":
-            model.add(rows[facility_id] == anchor.offset)
-            model.add(columns[facility_id] == used_columns - 1)
-        elif anchor.side == "top":
-            model.add(rows[facility_id] == 0)
-            model.add(columns[facility_id] == anchor.offset)
-        else:
-            model.add(rows[facility_id] == used_rows - 1)
-            model.add(columns[facility_id] == anchor.offset)
-
-    distances: list[Any] = []
-    max_distance = max(1, max_rows + max_columns - 2)
-    for edge in adapted.internal_edges:
-        source = adapted.node_to_facility[edge.source]
-        target = adapted.node_to_facility[edge.target]
-        row_delta = model.new_int_var(0, max_rows - 1, f"compact_{edge.edge_id}_dr")
-        column_delta = model.new_int_var(
-            0,
-            max_columns - 1,
-            f"compact_{edge.edge_id}_dc",
-        )
-        distance = model.new_int_var(1, max_distance, f"compact_{edge.edge_id}_distance")
-        model.add_abs_equality(row_delta, rows[source] - rows[target])
-        model.add_abs_equality(column_delta, columns[source] - columns[target])
-        model.add(distance == row_delta + column_delta)
-        distances.append(distance)
-
-    area = model.new_int_var(1, max_rows * max_columns, "compact_area")
-    perimeter = model.new_int_var(2, max_rows + max_columns, "compact_perimeter")
-    model.add_multiplication_equality(area, [used_rows, used_columns])
-    model.add(perimeter == used_rows + used_columns)
-    distance_limit = max(1, len(distances) * max_distance)
-    perimeter_weight = distance_limit + 1
-    area_weight = (max_rows + max_columns) * perimeter_weight + distance_limit + 1
-    model.minimize(
-        area * area_weight
-        + perimeter * perimeter_weight
-        + sum(distances)
-    )
-
-    normalized = normalize_layout_hint(adapted, prior_hint)
-    if normalized is not None:
-        facilities = normalized["facilities"]
-        assert isinstance(facilities, list)
-        for item in facilities:
-            assert isinstance(item, dict)
-            facility_id = int(item["id"])
-            row_value = int(item["row"])
-            column_value = int(item["column"])
-            model.add_hint(rows[facility_id], row_value)
-            model.add_hint(columns[facility_id], column_value)
-            model.add_hint(cells[facility_id], row_value * max_columns + column_value)
-
-    solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = time_limit
-    solver.parameters.num_search_workers = workers
-    solver.parameters.relative_gap_limit = 0.05
-    solver.parameters.log_search_progress = debug
-    status = solver.solve(model)
-    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        return None
-
-    placement_rows = int(solver.value(used_rows))
-    placement_columns = int(solver.value(used_columns))
-    routing_area_target = min(
-        max_rows * max_columns,
-        facility_count
-        + (3 * len(adapted.internal_edges) + 1) // 2
-        + sum(adapted.problem.edge_min_transit_cells),
-    )
-    placement_aspect = placement_columns / max(1, placement_rows)
-    placement_aspect = min(2.0, max(0.5, placement_aspect))
-    grid_options: list[tuple[float, int, int, int, int]] = []
-    for candidate_rows in range(placement_rows, max_rows + 1):
-        for candidate_columns in range(placement_columns, max_columns + 1):
-            candidate_area = candidate_rows * candidate_columns
-            shortfall = max(0, routing_area_target - candidate_area)
-            aspect_error = abs(candidate_columns / candidate_rows - placement_aspect)
-            grid_options.append(
-                (
-                    shortfall * 1000 + aspect_error,
-                    abs(candidate_area - routing_area_target),
-                    candidate_area,
-                    candidate_rows,
-                    candidate_columns,
-                )
-            )
-    _, _, _, recommended_rows, recommended_columns = min(grid_options)
-    layout_hint = {
-        "schema": LAYOUT_HINT_SCHEMA,
-        "grid": {"rows": max_rows, "columns": max_columns},
-        "facilities": [
-            {
-                "id": facility_id,
-                "row": int(solver.value(rows[facility_id])),
-                "column": int(solver.value(columns[facility_id])),
-            }
-            for facility_id in range(facility_count)
-        ],
-        "source": "compact-size-estimate",
-    }
-    return {
-        "schema": "topoflow-compact-size-estimate/v1",
-        "status": "OPTIMAL" if status == cp_model.OPTIMAL else "FEASIBLE",
-        "maximumGrid": {"rows": max_rows, "columns": max_columns},
-        "placementGrid": {
-            "rows": placement_rows,
-            "columns": placement_columns,
-        },
-        "recommendedGrid": {
-            "rows": recommended_rows,
-            "columns": recommended_columns,
-        },
-        "routingAreaTarget": routing_area_target,
-        "facilityCount": facility_count,
-        "internalEdgeCount": len(adapted.internal_edges),
-        "layoutHint": layout_hint,
-    }
-
-
 def _configure_search_mode(solver: Any, search_mode: str) -> None:
     if search_mode not in SEARCH_MODES:
         raise ValueError(f"search_mode must be one of {sorted(SEARCH_MODES)}")
@@ -1249,8 +1063,6 @@ def solve_topoflow(
     route_length_upper_bound: int | None = None,
     layout_hint_callback: LayoutHintCallback | None = None,
     progress_callback: Callable[[str], None] | None = None,
-    incumbent_callback: IncumbentCallback | None = None,
-    incumbent_solution_callback: IncumbentSolutionCallback | None = None,
 ) -> tuple[dict[str, object], str, int]:
     if time_limit <= 0 or workers <= 0:
         raise ValueError("time_limit and workers must be positive")
@@ -1430,8 +1242,6 @@ def solve_with_expansion(
     route_length_upper_bound: int | None = None,
     layout_hint_callback: LayoutHintCallback | None = None,
     progress_callback: Callable[[str, int, int], None] | None = None,
-    incumbent_callback: IncumbentCallback | None = None,
-    incumbent_solution_callback: IncumbentSolutionCallback | None = None,
 ) -> tuple[dict[str, object], str, int, list[dict[str, object]]]:
     attempts: list[dict[str, object]] = []
     sizes = _expanded_grid_sizes(adapted)
@@ -1475,8 +1285,6 @@ def solve_with_expansion(
                 route_length_upper_bound=route_length_upper_bound,
                 layout_hint_callback=capture_layout_hint,
                 progress_callback=callback,
-                incumbent_callback=incumbent_callback,
-                incumbent_solution_callback=incumbent_solution_callback,
             )
             attempts.append(
                 {

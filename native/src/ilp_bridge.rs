@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 
 use num_bigint::BigInt;
-use num_traits::{One, ToPrimitive, Zero};
+use num_traits::{ToPrimitive, Zero};
 use pyo3::prelude::*;
 use serde_json::{json, Value};
 use z3::ast::{Ast, Bool, Int, Real};
@@ -62,13 +62,11 @@ fn parse_z3_numeral(raw: &str) -> Result<Rat, String> {
     Ok(Rat::new(integer(numerator)?, integer(denominator)?))
 }
 
-fn rat_to_real<'ctx>(ctx: &'ctx Context, value: &Rat) -> Real<'ctx> {
-    Real::from_real_str(
-        ctx,
-        &value.numer().to_str_radix(10),
-        &value.denom().to_str_radix(10),
-    )
-    .expect("rational numeral")
+fn rat_to_real<'ctx>(ctx: &'ctx Context, value: &Rat) -> Result<Real<'ctx>, String> {
+    let numerator = value.numer().to_str_radix(10);
+    let denominator = value.denom().to_str_radix(10);
+    Real::from_real_str(ctx, &numerator, &denominator)
+        .ok_or_else(|| format!("invalid rational numeral {numerator}/{denominator}"))
 }
 
 fn get_string(value: &Value, key: &str) -> Result<String, String> {
@@ -139,7 +137,7 @@ impl<'ctx> BridgeSolver<'ctx> {
             let name = pair[1]
                 .as_str()
                 .ok_or_else(|| "term variable must be a string".to_owned())?;
-            expression = expression + rat_to_real(ctx, &coefficient) * self.linear_of(name)?;
+            expression = expression + rat_to_real(ctx, &coefficient)? * self.linear_of(name)?;
         }
         Ok(expression)
     }
@@ -195,19 +193,28 @@ impl<'ctx> BridgeSolver<'ctx> {
                 literals.push((ast, weight));
             } else {
                 // c*x with c < 0  <=>  c - (-c)*(not x)
-                offset += weight;
-                literals.push((ast.not(), -weight));
+                offset = offset
+                    .checked_add(weight)
+                    .ok_or("constraint offset out of range")?;
+                literals.push((ast.not(), weight.checked_neg().ok_or("weight out of range")?));
             }
         }
-        let k = rhs - offset;
+        let k = rhs
+            .checked_sub(offset)
+            .ok_or("constraint rhs out of range")?;
+        let k = i32::try_from(k).map_err(|_| "constraint rhs out of range".to_owned())?;
         let references: Vec<(&Bool<'ctx>, i32)> = literals
             .iter()
-            .map(|(ast, weight)| (ast, *weight as i32))
-            .collect();
+            .map(|(ast, weight)| {
+                i32::try_from(*weight)
+                    .map(|weight| (ast, weight))
+                    .map_err(|_| "weight out of range".to_owned())
+            })
+            .collect::<Result<_, _>>()?;
         let assertion = match op {
-            "le" => Bool::pb_le(ctx, &references, k as i32),
-            "ge" => Bool::pb_ge(ctx, &references, k as i32),
-            "eq" => Bool::pb_eq(ctx, &references, k as i32),
+            "le" => Bool::pb_le(ctx, &references, k),
+            "ge" => Bool::pb_ge(ctx, &references, k),
+            "eq" => Bool::pb_eq(ctx, &references, k),
             other => return Err(format!("unknown constraint op {other:?}")),
         };
         let assertion = conditions
@@ -227,7 +234,7 @@ impl<'ctx> BridgeSolver<'ctx> {
         rhs: &Rat,
         conditions: &[Bool<'ctx>],
     ) -> Result<(), String> {
-        let rhs_ast = rat_to_real(ctx, rhs);
+        let rhs_ast = rat_to_real(ctx, rhs)?;
         let constraint = match op {
             "le" => expression.le(&rhs_ast),
             "ge" => expression.ge(&rhs_ast),
@@ -314,12 +321,12 @@ fn build<'ctx>(
         if let Some(lo) = item.get("lo").and_then(Value::as_str) {
             solver
                 .optimize
-                .assert(&linear.ge(&rat_to_real(ctx, &parse_rat(lo)?)));
+                .assert(&linear.ge(&rat_to_real(ctx, &parse_rat(lo)?)?));
         }
         if let Some(hi) = item.get("hi").and_then(Value::as_str) {
             solver
                 .optimize
-                .assert(&linear.le(&rat_to_real(ctx, &parse_rat(hi)?)));
+                .assert(&linear.le(&rat_to_real(ctx, &parse_rat(hi)?)?));
         }
         solver.variables.insert(name.clone(), ast);
         solver.linear.insert(name, linear);
@@ -350,15 +357,11 @@ fn build<'ctx>(
             });
             let pb_done = all_boolean
                 && rhs.is_integer()
-                && solver
-                    .assert_pseudo_boolean(
-                        ctx,
-                        terms,
-                        &op,
-                        rhs.numer().to_i64().unwrap_or(0),
-                        &conditions,
-                    )
-                    .is_ok();
+                && rhs.numer().to_i64().is_some_and(|rhs_i64| {
+                    solver
+                        .assert_pseudo_boolean(ctx, terms, &op, rhs_i64, &conditions)
+                        .is_ok()
+                });
             if !pb_done {
                 let expression = solver.expr(ctx, terms)?;
                 solver.assert_linear(ctx, expression, &op, &rhs, &conditions)?;

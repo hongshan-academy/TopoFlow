@@ -9,7 +9,7 @@ single Z3 engine embedded in the native extension.
 from __future__ import annotations
 
 import json
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 import topoflow_native
 
@@ -303,6 +303,7 @@ class Model:
                 expression.add_var(condition, 1)
             else:
                 raise TypeError(f"unsupported boolean condition: {condition!r}")
+        expression.constant -= 1
         _Constraint(self, expression, "ge")
 
     def add_multiplication_equality(
@@ -327,9 +328,7 @@ class Model:
     def maximize(self, expr: _LinearExpr) -> None:
         self._objective = {"dir": "max", "terms": _terms(expr)}
 
-    def spec(
-        self, timeout_ms: int, include_objective: bool = True
-    ) -> dict[str, Any]:
+    def spec(self, timeout_ms: int) -> dict[str, Any]:
         constraints = []
         auxiliary_count = 0
         for constraint in self._constraints:
@@ -379,7 +378,7 @@ class Model:
             "hints": self._hints,
             "timeout_ms": timeout_ms,
         }
-        if include_objective and self._objective is not None:
+        if self._objective is not None:
             spec["objective"] = self._objective
         return spec
 

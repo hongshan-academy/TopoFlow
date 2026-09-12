@@ -86,4 +86,58 @@ impl GraphData {
             sink,
         })
     }
+
+    /// Index pairs of parallel edges (same `u -> v`), grouped in one pass.
+    pub fn parallel_pairs(&self) -> Vec<(usize, usize)> {
+        let mut groups: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
+        for (id, edge) in self.edges.iter().enumerate() {
+            groups.entry((edge.u, edge.v)).or_default().push(id);
+        }
+        let mut pairs = Vec::new();
+        for ids in groups.values() {
+            for a in 0..ids.len() {
+                for b in (a + 1)..ids.len() {
+                    pairs.push((ids[a], ids[b]));
+                }
+            }
+        }
+        pairs
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn graph(raw: &[(&str, &str)]) -> GraphData {
+        GraphData::new(
+            raw.iter()
+                .map(|(u, v)| (u.to_string(), v.to_string()))
+                .collect(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn groups_two_parallel_edges() {
+        let g = graph(&[
+            ("In", "S2_0"),
+            ("S2_0", "C2_0"),
+            ("S2_0", "C2_0"),
+            ("C2_0", "Out"),
+        ]);
+        assert_eq!(g.parallel_pairs(), vec![(1, 2)]);
+    }
+
+    #[test]
+    fn groups_three_parallel_edges() {
+        let g = graph(&[
+            ("In", "S2_0"),
+            ("S2_0", "C2_0"),
+            ("S2_0", "C2_0"),
+            ("S2_0", "C2_0"),
+            ("C2_0", "Out"),
+        ]);
+        assert_eq!(g.parallel_pairs(), vec![(1, 2), (1, 3), (2, 3)]);
+    }
 }

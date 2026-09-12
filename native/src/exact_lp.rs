@@ -47,11 +47,17 @@ fn objective_value(table: &[Vec<Rat>], costs: &[Rat], basis: &[usize]) -> Rat {
 /// objective is unbounded.
 fn bland_simplex(table: &mut [Vec<Rat>], costs: &[Rat], basis: &mut [usize]) -> Option<Rat> {
     let ncols = table[0].len() - 1;
+    let mut is_basic = vec![false; ncols];
+    for &basic in basis.iter() {
+        if basic < ncols {
+            is_basic[basic] = true;
+        }
+    }
     loop {
         // Bland's rule: first column with a negative reduced cost enters.
         let mut entering: Option<usize> = None;
         'columns: for j in 0..ncols {
-            if basis.contains(&j) {
+            if is_basic[j] {
                 continue;
             }
             let mut reduced = costs[j].clone();
@@ -85,8 +91,13 @@ fn bland_simplex(table: &mut [Vec<Rat>], costs: &[Rat], basis: &mut [usize]) -> 
             }
         }
         let Some(leaving) = leaving else { return None };
+        let old = basis[leaving];
         pivot(table, entering, leaving);
+        if old < ncols {
+            is_basic[old] = false;
+        }
         basis[leaving] = entering;
+        is_basic[entering] = true;
     }
     Some(objective_value(table, costs, basis))
 }
@@ -107,6 +118,13 @@ pub fn solve_lp(
     let m_ub = a_ub.len();
     let m_eq = a_eq.len();
     let total_cols = n + m_ub + m_eq;
+
+    if m_ub == 0 && m_eq == 0 {
+        if c.iter().any(|cost| *cost < Rat::zero()) {
+            return (LpStatus::Unbounded, Vec::new());
+        }
+        return (LpStatus::Optimal, vec![Rat::zero(); n]);
+    }
 
     let mut rows: Vec<Vec<Rat>> = Vec::with_capacity(m_ub + m_eq);
     let mut rhs: Vec<Rat> = Vec::with_capacity(m_ub + m_eq);

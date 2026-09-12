@@ -23,3 +23,8 @@ def ceil_log3(value: int) -> int:
         exponent += 1
         capacity *= 3
     return exponent
+
+
+def unit_topology_size(twos: int, odd_k: int) -> tuple[int, int]:
+    """Return ``(nodes, edges)`` of a unit module with ``2**twos * 3**odd_k`` parts."""
+    return 2 * (twos + odd_k) + 2, 3 * twos + 4 * odd_k + 1

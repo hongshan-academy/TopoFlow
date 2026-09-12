@@ -2,7 +2,6 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any, Deque, Dict, List, Optional, Set, Tuple
 
-from result import EdgeResult, SimulatorResult
 from graph import Graph, Node, Edge, NodeType
 
 
@@ -47,7 +46,6 @@ class TopoFlowSimulator:
         self.deliverable = self._compute_deliverable()
 
         self.frame = 0
-        self.global_cycle_info: Optional[Dict[str, Any]] = None
 
         self.node_runtime: Dict[Node, NodeRuntime] = {}
         self.edge_queues: Dict[EdgeKey, Deque[int]] = {}
@@ -58,7 +56,6 @@ class TopoFlowSimulator:
         self.frame = 0
         self.node_runtime.clear()
         self.edge_queues.clear()
-        self.global_cycle_info = None
 
         for node in self.graph.nodes:
             self.node_runtime[node] = NodeRuntime()
@@ -302,46 +299,6 @@ class TopoFlowSimulator:
             edge_part.extend(self.edge_queues[edge])
         return tuple(node_part + edge_part)
 
-    def run_until_cycle(self, max_frames: Optional[int] = None) -> Dict[str, Any]:
-        state_to_frame: Dict[Tuple[int, ...], Dict[str, Any]] = {}
-        node_flow_ones: Dict[Node, int] = {
-            node: 0 for node in self.graph.nodes
-        }
-        edge_flow_ones: Dict[EdgeKey, int] = {
-            edge: 0 for edge in self._all_edges
-        }
-
-        while True:
-            if max_frames is not None and self.frame >= max_frames:
-                self.global_cycle_info = _build_max_frames_result(
-                    self, node_flow_ones, edge_flow_ones,
-                )
-                return self.global_cycle_info
-
-            key = self.serialize_state()
-
-            if key in state_to_frame:
-                stored = state_to_frame[key]
-                self.global_cycle_info = _build_cycle_result(
-                    self, stored, node_flow_ones, edge_flow_ones,
-                )
-                return self.global_cycle_info
-
-            state_to_frame[key] = {
-                'frame': self.frame,
-                'node_flow_ones': dict(node_flow_ones),
-                'edge_flow_ones': dict(edge_flow_ones),
-            }
-
-            node_received, edge_filled = self.step_once()
-
-            for node, received in node_received.items():
-                if received:
-                    node_flow_ones[node] += 1
-
-            for edge in edge_filled:
-                edge_flow_ones[edge] += 1
-
     def get_snapshot(self) -> Dict[str, Any]:
         return {
             'frame': self.frame,
@@ -373,7 +330,6 @@ def _build_cycle_result(
     stored: Dict[str, Any],
     node_flow_ones: Dict[Node, int],
     edge_flow_ones: Dict[EdgeKey, int],
-    converged: bool = True,
 ) -> Dict[str, Any]:
     period = sim.frame - stored['frame']
     node_ratios: Dict[Node, Tuple[int, int]] = {}
@@ -391,7 +347,7 @@ def _build_cycle_result(
         'total_frames': sim.frame,
         'node_ratios': node_ratios,
         'edge_ratios': edge_ratios,
-        'converged': converged,
+        'converged': True,
     }
 
 
@@ -409,25 +365,6 @@ def _build_max_frames_result(
         'edge_ratios': {e: (edge_flow_ones[e], 1) for e in sim._all_edges},
         'converged': False,
     }
-
-
-def simulate(graph: Graph, max_frames: Optional[int] = None) -> SimulatorResult:
-    sim = TopoFlowSimulator(graph)
-    cycle = sim.run_until_cycle(max_frames=max_frames)
-
-    edge_results: List[EdgeResult] = []
-    for edge in sim._all_edges:
-        num, den = cycle['edge_ratios'][edge]
-        flow = num / den if den > 0 else 0.0
-        edge_results.append(EdgeResult(
-            source=edge[0],
-            target=edge[1],
-            flow=flow,
-            is_blocked=False,
-            is_full=False,
-        ))
-
-    return SimulatorResult(edges=edge_results, converged=cycle.get('converged', True))
 
 
 def simulate_frames(graph: Graph, max_frames: Optional[int] = None) -> Dict[str, Any]:

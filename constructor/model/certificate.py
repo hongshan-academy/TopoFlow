@@ -69,8 +69,16 @@ class FlowCertificate:
 
     def validation_errors(self) -> tuple[str, ...]:
         """Check graph, flow, state, and local rules without solving a rank system."""
-        errors: list[str] = list(self.graph.validation_errors())
         incoming, outgoing = _incidence(self.graph, self.edges)
+        return self._validation_errors(incoming, outgoing, _parallel_edges(self.edges))
+
+    def _validation_errors(
+        self,
+        incoming: dict[str, list[int]],
+        outgoing: dict[str, list[int]],
+        parallel: dict[Edge, list[int]],
+    ) -> tuple[str, ...]:
+        errors: list[str] = list(self.graph.validation_errors())
         for index, flow in enumerate(self.flows):
             if not 0 < flow <= 1:
                 errors.append(f"edge {index} has flow outside (0, 1]: {flow}")
@@ -100,9 +108,6 @@ class FlowCertificate:
             ):
                 errors.append(f"non-fixed sink edge {index} must be EMPTY")
 
-        parallel: dict[Edge, list[int]] = {}
-        for index, edge in enumerate(self.edges):
-            parallel.setdefault(edge, []).append(index)
         for edge, indices in parallel.items():
             first = self.flows[indices[0]]
             if any(self.flows[index] != first for index in indices[1:]):
@@ -160,11 +165,9 @@ class FlowCertificate:
 
     def check(self, *, require_full_rank: bool = True) -> CertificateCheck:
         started = perf_counter()
-        errors = list(self.validation_errors())
         incoming, outgoing = _incidence(self.graph, self.edges)
-        parallel: dict[Edge, list[int]] = {}
-        for index, edge in enumerate(self.edges):
-            parallel.setdefault(edge, []).append(index)
+        parallel = _parallel_edges(self.edges)
+        errors = list(self._validation_errors(incoming, outgoing, parallel))
         rows = _equation_rows(self, incoming, outgoing, parallel)
         rank = _matrix_rank(rows)
         if require_full_rank and rank != len(self.edges):
@@ -192,6 +195,13 @@ def _incidence(
         outgoing[source].append(index)
         incoming[target].append(index)
     return incoming, outgoing
+
+
+def _parallel_edges(edges: tuple[Edge, ...]) -> dict[Edge, list[int]]:
+    parallel: dict[Edge, list[int]] = {}
+    for index, edge in enumerate(edges):
+        parallel.setdefault(edge, []).append(index)
+    return parallel
 
 
 def _is_splitter(node: str) -> bool:

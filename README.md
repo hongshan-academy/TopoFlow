@@ -12,8 +12,7 @@
   - `Rust - Karzanov (stable)`：Rust 原生稳定分配求解器，聚合 LP 由内置确定性精确单纯形求解（`native/src/exact_lp.rs`）。
   - 三种引擎统一由 `solver.py` 提供并共享同一个求解 API（`/api/solve`）。
 - **离散仿真**：逐帧回放传送带队列与节点占用（`simulator.py`，边容量 4）。
-- **标准限流计算**：按目标比例 `p/q` 构造标准限流模块，任意 `0 < p < q` 完备可构造，
-  输出规约步骤与满秩流量解（可逐边校验，`constructor/`）。
+- **标准限流计算**：按目标比例 `p/q` 构造标准限流模块，任意 `0 < p < q` 完备可构造，输出规约步骤与满秩流量解（可逐边校验，`constructor/`）。
 - **标准分流模块**：按 `p:q` 二分构造分流拓扑。
 - **物理布局**：内置布局求解器（Z3，经 `ilpbridge.py`）搜索最小可行网格并可视化（`layout/`）。
 
@@ -58,10 +57,10 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 
 ```sh
 uv sync
-uv run uvicorn server:app --port 8080 --host 127.0.0.1
+uv run uvicorn server:app --port 8081 --host 127.0.0.1
 ```
 
-> Rust 扩展通过 maturin 构建，需要 Rust 工具链与 LLVM/libclang。
+> Rust 扩展通过 maturin 构建，需要 Rust 工具链（edition 2024，Rust ≥ 1.85）与 LLVM/libclang。
 > 若 LLVM 安装在 `C:\Program Files\LLVM`，`server.ps1` 会自动设置 `LIBCLANG_PATH`。
 
 ## API

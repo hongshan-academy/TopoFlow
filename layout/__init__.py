@@ -10,7 +10,6 @@ from .adapter import (
     SolveFailure,
     adapt_layout_request,
     adapt_topoflow,
-    estimate_compact_layout,
     solve_topoflow,
     solve_with_expansion,
 )
@@ -33,7 +32,6 @@ __all__ = [
     "adapt_topoflow",
     "build_model",
     "build_solution",
-    "estimate_compact_layout",
     "parse_problem",
     "resolve_output_path",
     "solve_topoflow",

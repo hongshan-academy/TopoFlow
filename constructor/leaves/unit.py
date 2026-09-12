@@ -12,7 +12,7 @@ from functools import cache
 from time import perf_counter
 from typing import Any, Literal
 
-from ..model.arithmetic import ceil_log3, factor_power_of_two
+from ..model.arithmetic import ceil_log3, factor_power_of_two, unit_topology_size
 from ..model.certificate import EdgeState, FlowCertificate
 from ..operators.composition import boundary_flow, replace_fixed_edge
 
@@ -51,7 +51,7 @@ class UnitPlan:
     @property
     def topology_size(self) -> tuple[int, int]:
         odd_k = 0 if self.witness is None else self.witness.k
-        return 2 * (self.twos + odd_k) + 2, 3 * self.twos + 4 * odd_k + 1
+        return unit_topology_size(self.twos, odd_k)
 
 
 def half_certificate() -> FlowCertificate:

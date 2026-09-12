@@ -18,26 +18,28 @@ import logging
 import math
 import os
 import queue
-import sys
 import time
 from collections import defaultdict
-from fractions import Fraction
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
-from solver import solve, solve_native
+from flow_service import (
+    build_limit_module,
+    build_ratio_graph,
+    deduplicate_solutions,
+    enumerate_solutions,
+)
+from solver import solve_native
 from simulator import simulate_frames
 from graph import Graph
 from config import DEFAULT_CONFIG
-from result import SolverResult
-
-from builders.splitter import find_ratio_scheme, split_leaves, bfs_min_splits
-from builders.merger import merge_to
 
 LOG_DIR = Path("logs")
 LOG_DIR.mkdir(exist_ok=True)
@@ -47,7 +49,7 @@ logger.setLevel(logging.INFO)
 
 fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
 
-fh = logging.FileHandler(LOG_DIR / "server.log", encoding="utf-8")
+fh = RotatingFileHandler(LOG_DIR / "server.log", maxBytes=2_000_000, backupCount=3, encoding="utf-8")
 fh.setLevel(logging.INFO)
 fh.setFormatter(fmt)
 logger.addHandler(fh)
@@ -60,50 +62,19 @@ logger.addHandler(ch)
 app = FastAPI(title="TopoFlow API")
 
 
-# -- Fraction approximation -------------------------------------------------
-def _simplest_rational_in_interval(lo: Fraction, hi: Fraction) -> Fraction:
-    """Return the rational with the smallest denominator within [lo, hi].
-
-    Stern-Brocot / continued-fraction descent: if an integer lies in the
-    interval it is the simplest answer, otherwise strip the common integer
-    part and recurse on the reciprocals of the fractional remainders.
-    """
-    if lo > hi:
-        lo, hi = hi, lo
-    ceil_lo = -((-lo.numerator) // lo.denominator)
-    if ceil_lo <= hi:
-        return Fraction(ceil_lo)
-    base = lo.numerator // lo.denominator  # floor(lo) == floor(hi) here
-    inner = _simplest_rational_in_interval(1 / (hi - base), 1 / (lo - base))
-    return base + 1 / inner
+def _error(message: str, status_code: int = 400) -> JSONResponse:
+    return JSONResponse({"error": message}, status_code=status_code)
 
 
-def _recover_fraction(value: float) -> Fraction:
-    """Recover the simplest rational within 1.5 ULP of the given double.
-
-    A correctly rounded value lies within 0.5 ULP of the true rational, so a
-    solver error of one float step in either direction needs a 1.5 ULP window.
-    The window is searched for the smallest-denominator rational, which removes
-    floating-point noise without capping the denominator.
-    """
-    exact = Fraction(value)
-    tol = Fraction(3, 2) * Fraction(math.ulp(value))
-    return _simplest_rational_in_interval(exact - tol, exact + tol)
-
-
-def approximate_fraction(value: float, tolerance: float = 1e-9) -> Dict[str, Any]:
-    if not math.isfinite(value):
-        return {"numerator": 0, "denominator": 1, "text": "0/1"}
-    if abs(value) < tolerance:
-        return {"numerator": 0, "denominator": 1, "text": "0/1"}
-    if abs(value - 1) < tolerance:
-        return {"numerator": 1, "denominator": 1, "text": "1/1"}
-    frac = _recover_fraction(value)
-    return {
-        "numerator": frac.numerator,
-        "denominator": frac.denominator,
-        "text": f"{frac.numerator}/{frac.denominator}",
-    }
+@app.exception_handler(RequestValidationError)
+async def _on_validation_error(_request: Request, exc: RequestValidationError) -> JSONResponse:
+    first = exc.errors()[0] if exc.errors() else {}
+    location = ".".join(str(part) for part in first.get("loc", ()))
+    message = first.get("msg", "请求参数无效")
+    return JSONResponse(
+        {"error": f"{location}: {message}" if location else message},
+        status_code=422,
+    )
 
 
 # -- Request models ---------------------------------------------------------
@@ -150,70 +121,22 @@ class LimitModuleRequest(BaseModel):
     cross_check: bool = False
 
 
-MAX_SOLUTIONS = 50
+class RatioSplitRequest(BaseModel):
+    p: int
+    q: int
 
 
-def _find_free_edge_indices(result: SolverResult) -> Set[int]:
-    free: Set[int] = set()
-    for i, e in enumerate(result.edges):
-        if e.flow >= 1.0 - 1e-8:
-            free.add(i)
-    return free
+class TopoflowLayoutRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
 
-
-def _generate_blocked_combos(base: List[bool], free_indices: Set[int]) -> List[List[bool]]:
-    free_list = sorted(free_indices)
-    results = []
-    for mask in range(1 << len(free_list)):
-        pattern = list(base)
-        for j, idx in enumerate(free_list):
-            pattern[idx] = bool(mask & (1 << j))
-        results.append(pattern)
-    return results
-
-
-def _build_solution_payload(req_edges: List[EdgeModel], result: SolverResult) -> Dict[str, Any]:
-    edge_flows: List[Dict[str, Any]] = []
-    for (req_edge, solver_edge) in zip(req_edges, result.edges):
-        frac = approximate_fraction(solver_edge.flow)
-        edge_flows.append({
-            "id": req_edge.id,
-            "flow": frac,
-            "isBlocked": solver_edge.is_blocked,
-        })
-
-    node_flows_map: Dict[str, float] = {}
-    for e in result.edges:
-        if e.target not in node_flows_map:
-            node_flows_map[e.target] = 0.0
-        node_flows_map[e.target] += e.flow
-
-    node_flows_list: List[Dict[str, Any]] = [
-        {"id": nid, "flow": approximate_fraction(val)}
-        for nid, val in node_flows_map.items()
-    ]
-
-    return {"edgeFlows": edge_flows, "nodeFlows": node_flows_list}
-
-
-def _deduplicate_solutions(solutions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    seen: Dict[Tuple[Tuple[Any, Any, Any], ...], Any] = {}
-    for sol in solutions:
-        key = tuple(
-            (ef["id"], ef["flow"]["numerator"], ef["flow"]["denominator"])
-            for ef in sol["edgeFlows"]
-        )
-        blocked = sum(1 for ef in sol["edgeFlows"] if ef["isBlocked"])
-        if key not in seen or blocked < seen[key][1]:
-            seen[key] = (sol, blocked)
-    return [sol for sol, _ in seen.values()]
+    nodes: List[dict] = Field(default_factory=list, validation_alias=AliasChoices("nodes", "rawNodes"))
+    edges: List[dict] = Field(default_factory=list, validation_alias=AliasChoices("edges", "rawEdges"))
+    require_belt_cell: bool = Field(default=True, validation_alias=AliasChoices("requireBeltCell", "require_belt_cell"))
+    time_limit: float = Field(default=30.0, validation_alias=AliasChoices("timeLimit", "time_limit"))
+    min_grid: int = Field(default=3, validation_alias=AliasChoices("minGrid", "min_grid"))
 
 
 # -- Common helpers ---------------------------------------------------------
-def _raw_graph_from_body(body: dict) -> tuple[list[dict], list[dict]]:
-    nodes = body.get("nodes") or body.get("rawNodes", [])
-    edges = body.get("edges") or body.get("rawEdges", [])
-    return nodes, edges
 
 
 # -- Physical layout bridge (layout package, exact Z3 bridge) ---------------
@@ -340,174 +263,6 @@ def _find_min_grid(adapter, topo_graph: dict, require_cell: bool,
     return cur_r, cur_c, cur_sol, cur_rl
 
 
-def _layout_nodes(nodes: list[dict], edges: list[dict], exclude_to: set) -> None:
-    out_nid = {n["id"] for n in nodes}
-    indeg: Dict[str, int] = defaultdict(int)
-    adj: Dict[str, list] = defaultdict(list)
-    for e in edges:
-        if e["from"] in out_nid and e["to"] in out_nid and e["to"] not in exclude_to:
-            adj[e["from"]].append(e["to"])
-            indeg[e["to"]] += 1
-
-    depth: Dict[str, int] = {}
-    import collections
-    q: "collections.deque[str]" = collections.deque()
-    for n in nodes:
-        if indeg[n["id"]] == 0:
-            depth[n["id"]] = 0
-            q.append(n["id"])
-    while q:
-        u = q.popleft()
-        for v in adj[u]:
-            if depth.get(v, -1) < depth[u] + 1:
-                depth[v] = depth[u] + 1
-            indeg[v] -= 1
-            if indeg[v] == 0:
-                q.append(v)
-
-    layers: dict[int, list[str]] = defaultdict(list)
-    for n in nodes:
-        layers[depth.get(n["id"], 0)].append(n["id"])
-    X = 150.0
-    Y_START, Y_GAP = 80.0, 70.0
-    y_by_id = {}
-    for d, ids in layers.items():
-        for j, i in enumerate(ids):
-            y_by_id[i] = Y_START + j * Y_GAP
-    for n in nodes:
-        n["x"] = depth.get(n["id"], 0) * X
-        n["y"] = y_by_id[n["id"]]
-
-
-def _build_ratio_graph(p: int, q: int, max_share: float | None = None) -> dict:
-    a, b, N = find_ratio_scheme(p, q, max_share)
-    t1, t2, t3 = N - q, p, q - p
-    if min(t1, t2, t3) < 0 or p <= 0 or q <= 0:
-        raise ValueError("需满足 0 < p < q 且 q 为整数")
-
-    nodes: list[dict] = []
-    edges: list[dict] = []
-    counters: Dict[str, int] = defaultdict(int)
-
-    def nid(prefix: str) -> str:
-        counters[prefix] += 1
-        return f"{prefix}_{counters[prefix]}"
-
-    def emit(ntype: str) -> str:
-        i = nid(ntype)
-        nodes.append({"id": i, "type": ntype})
-        return i
-
-    in_id = emit("In")
-    out1_id = emit("Out")
-    out2_id = emit("Out")
-    need_c1 = t1 > 0
-    c1_id = emit("C") if need_c1 else None
-    if need_c1:
-        edges.append({"from": in_id, "to": c1_id})
-
-    groups: Optional[Tuple[List[int], List[int], List[int]]] = None
-    path: Optional[List[Tuple[int, Tuple[int, ...]]]] = None
-    if bfs_min_splits is not None:
-        try:
-            plan = split_leaves(N, (t1, t2, t3), max_share, max(20, N))
-        except Exception:
-            plan = None
-        if plan is not None:
-            groups, path = plan
-
-    class Node:
-        __slots__ = ("value", "children", "group")
-        def __init__(self, value):
-            self.value = value
-            self.children = []
-            self.group = -1
-
-    if groups is not None and path is not None:
-        root = Node(N)
-        leaves_nodes = [root]
-        for parent_v, children_v in path:
-            target = next((ln for ln in leaves_nodes if ln.value == parent_v), None)
-            if target is None:
-                continue
-            target.children = [Node(cv) for cv in children_v]
-            leaves_nodes.remove(target)
-            leaves_nodes.extend(target.children)
-    else:
-        if max_share is not None and max_share * N <= 1:
-            raise ValueError(
-                f"无法通过细分使每份占比小于 {max_share:.4g}（N={N}）")
-        def build_full(value, ea, eb):
-            if ea == 0 and eb == 0:
-                return Node(value)
-            n = Node(value)
-            count = 3 if eb > 0 else 2
-            sub = value // count
-            nea, neb = (ea, eb - 1) if eb > 0 else (ea - 1, eb)
-            n.children = [build_full(sub, nea, neb) for _ in range(count)]
-            return n
-        root = build_full(N, a, b)
-        leaves_nodes = []
-        def collect(n):
-            if not n.children:
-                leaves_nodes.append(n)
-            else:
-                for ch in n.children:
-                    collect(ch)
-        collect(root)
-        groups = ([1] * t1, [1] * t2, [1] * t3)
-
-    from collections import Counter
-    remaining = [Counter(g) for g in groups]
-    for ln in leaves_nodes:
-        for gi in range(3):
-            if remaining[gi].get(ln.value, 0) > 0:
-                remaining[gi][ln.value] -= 1
-                ln.group = gi
-                break
-
-    root_id: List[Optional[str]] = [None]
-    leaf_ports: List[Tuple[str, int, int]] = []
-    def dfs(node, parent_s):
-        if node.children:
-            s = emit("S")
-            if parent_s:
-                edges.append({"from": parent_s, "to": s})
-            elif root_id[0] is None:
-                root_id[0] = s
-            for ch in node.children:
-                dfs(ch, s)
-        elif parent_s is not None:
-            leaf_ports.append((parent_s, node.group, node.value))
-    dfs(root, None)
-    if root_id[0] is not None:
-        src = c1_id if need_c1 else in_id
-        edges.append({"from": src, "to": root_id[0]})
-
-    group_ports: Dict[int, List[Tuple[str, int]]] = {0: [], 1: [], 2: []}
-    for ps, g, v in leaf_ports:
-        if g >= 0:
-            group_ports[g].append((ps, v))
-    if need_c1:
-        assert c1_id is not None
-        merge_to(nodes, edges, emit, group_ports[0], c1_id)
-    merge_to(nodes, edges, emit, group_ports[1], out1_id)
-    merge_to(nodes, edges, emit, group_ports[2], out2_id)
-
-    _layout_nodes(nodes, edges, exclude_to={c1_id} if c1_id else set())
-
-    for i, e in enumerate(edges):
-        e["id"] = f"e{i}"
-
-    return {
-        "nodes": nodes,
-        "edges": edges,
-        "info": {
-            "p": p, "q": q, "a": a, "b": b, "N": N,
-            "out1": p, "out2": q - p, "ratio": f"{p}:{q - p}",
-            "feedBack": t1, "total": N,
-        },
-    }
 _SOLVERS: dict[str, dict] = {
     "milp": {
         "label": "MILP (Z3, exact)",
@@ -546,7 +301,12 @@ async def api_solve(req: SolveRequest) -> Any:
         edges = [
             {"id": e.id, "from": e.from_, "to": e.to} for e in req.edges
         ]
-        native = await asyncio.to_thread(solve_native, engine, nodes, edges)
+        try:
+            native = await asyncio.to_thread(solve_native, engine, nodes, edges)
+        except ValueError as e:
+            return _error(str(e))
+        except RuntimeError as e:
+            return _error(str(e), 500)
         return JSONResponse(native)
 
     t0 = time.perf_counter()
@@ -563,57 +323,20 @@ async def api_solve(req: SolveRequest) -> Any:
     try:
         graph = Graph.from_text(text)
     except ValueError as e:
-        return {
-            "feasible": False,
-            "error": str(e),
-            "totalSolutions": 0,
-            "solutions": [],
-            "provedInfeasible": False,
-        }
+        return _error(str(e))
 
     logger.info("=" * 56)
     logger.info("Solve request - %d nodes, %d edges", len(req.nodes), len(req_edges))
     edge_desc = ", ".join(f"{e.from_}->{e.to}" for e in req_edges)
     logger.info("Edges: %s", edge_desc)
 
-    solutions: List[Dict[str, Any]] = []
-    patterns: List[List[bool]] = []
-    proved_infeasible = False
-
-    for i in range(MAX_SOLUTIONS):
-        result = solve(graph, exclude_patterns=patterns if patterns else None)
-        status_name = result.status
-
-        if status_name == 'Infeasible':
-            proved_infeasible = True
-            break
-        if status_name != 'Optimal':
-            break
-
-        payload = _build_solution_payload(req_edges, result)
-        solutions.append(payload)
-
-        free = _find_free_edge_indices(result)
-        base = [e.is_blocked for e in result.edges]
-
-        if free:
-            combos = _generate_blocked_combos(base, free)
-            patterns.extend(combos)
-            logger.info("--- Solution %d --- (%d free edges: %s -> %d exclusion patterns)",
-                        i + 1, len(free), sorted(free), len(combos))
-        else:
-            patterns.append(base)
-            logger.info("--- Solution %d ---", i + 1)
-
-        for ef in payload["edgeFlows"]:
-            logger.info("  %s : flow=%s blocked=%s", ef["id"], ef["flow"]["text"], ef["isBlocked"])
-        sink_flows = {nf["id"]: nf["flow"]["text"] for nf in payload["nodeFlows"]}
-        logger.info("  Node flows: %s", sink_flows)
-
+    solutions, proved_infeasible = await asyncio.to_thread(
+        enumerate_solutions, graph, req_edges
+    )
     elapsed = time.perf_counter() - t0
 
     before = len(solutions)
-    solutions = _deduplicate_solutions(solutions)
+    solutions = deduplicate_solutions(solutions)
     if before != len(solutions):
         logger.info("Deduplicated: %d -> %d solutions (%d duplicates removed)",
                     before, len(solutions), before - len(solutions))
@@ -641,7 +364,7 @@ async def api_solve(req: SolveRequest) -> Any:
 
 
 @app.post("/api/simulate")
-def api_simulate(req: SimulateRequest) -> Dict[str, Any]:
+def api_simulate(req: SimulateRequest) -> Any:
     node_ids = {n.id for n in req.nodes}
     text_lines: List[str] = []
     req_edges: List[EdgeModel] = []
@@ -654,9 +377,13 @@ def api_simulate(req: SimulateRequest) -> Dict[str, Any]:
     try:
         graph = Graph.from_text(text)
     except ValueError as exc:
-        return {"error": str(exc)}
+        return _error(str(exc))
 
-    result = simulate_frames(graph, max_frames=req.options.max_frames)
+    max_frames = req.options.max_frames
+    limit = DEFAULT_CONFIG.sim_max_frames
+    if limit is not None and (max_frames is None or max_frames > limit):
+        max_frames = limit
+    result = simulate_frames(graph, max_frames=max_frames)
 
     edge_to_id: Dict[Tuple[str, str, int], str] = {}
     for i, e in enumerate(req_edges):
@@ -720,151 +447,46 @@ def api_simulate(req: SimulateRequest) -> Dict[str, Any]:
 
 
 @app.post("/api/ratio-split")
-async def api_ratio_split(request: Request):
-    body = await request.json()
+async def api_ratio_split(req: RatioSplitRequest):
+    if not (0 < req.p < req.q):
+        return _error("需满足 0 < p < q")
     try:
-        p = int(body.get("p"))
-        q = int(body.get("q"))
-    except (TypeError, ValueError):
-        return JSONResponse({"error": "请输入正整数 p、q"}, status_code=400)
-    if p <= 0 or q <= 0 or p >= q:
-        return JSONResponse({"error": "需满足 0 < p < q"}, status_code=400)
-    try:
-        graph = await asyncio.to_thread(_build_ratio_graph, p, q)
+        graph = await asyncio.to_thread(build_ratio_graph, req.p, req.q)
         return JSONResponse(graph)
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-
-def _limit_node_type(name: str) -> str:
-    if name == "In":
-        return "In"
-    if name == "Out":
-        return "Out"
-    if name.startswith("S"):
-        return "S"
-    if name.startswith("C"):
-        return "C"
-    raise ValueError(f"未知构造节点: {name}")
-
-
-def _build_limit_module(p: int, q: int, optimize: bool, search_range: int,
-                        reduction_depth: int, reduction_state_limit: int,
-                        cross_check: bool) -> dict:
-    from constructor import boundary_flow, construct_fraction, crosscheck_polynomial
-
-    result = construct_fraction(
-        p, q,
-        optimize=optimize,
-        search_range=search_range,
-        reduction_depth=reduction_depth,
-        reduction_state_limit=reduction_state_limit,
-    )
-    cert = result.certificate
-
-    node_type: Dict[str, str] = {}
-    nodes: List[Dict[str, Any]] = []
-    for u, v in cert.edges:
-        for name in (u, v):
-            if name not in node_type:
-                node_type[name] = _limit_node_type(name)
-                nodes.append({"id": name, "type": node_type[name]})
-
-    edges: List[Dict[str, Any]] = [
-        {"id": f"e{i}", "from": u, "to": v}
-        for i, (u, v) in enumerate(cert.edges)
-    ]
-
-    edge_flows: List[Dict[str, Any]] = []
-    for i, (edge, flow, state) in enumerate(zip(cert.edges, cert.flows, cert.states)):
-        edge_flows.append({
-            "id": f"e{i}",
-            "from": edge[0],
-            "to": edge[1],
-            "flow": {
-                "numerator": flow.numerator,
-                "denominator": flow.denominator,
-                "text": f"{flow.numerator}/{flow.denominator}",
-            },
-            "state": state.name,
-            "fixed": i in cert.fixed,
-        })
-
-    _layout_nodes(nodes, edges, exclude_to=set())
-
-    info: Dict[str, Any] = {
-        "target": f"{result.target.numerator}/{result.target.denominator}",
-        "flow": f"{boundary_flow(cert).numerator}/{boundary_flow(cert).denominator}",
-        "strategy": result.reduction.strategy,
-        "cost": {
-            "nodes": result.reduction.cost.nodes,
-            "edges": result.reduction.cost.edges,
-            "fixedEdges": result.reduction.cost.fixed_edges,
-        },
-        "steps": list(result.reduction.steps()),
-        "rank": result.validation.rank,
-        "edgeCount": result.validation.edge_count,
-        "fullRank": result.validation.full_rank,
-        "valid": result.validation.valid,
-        "nodeCount": cert.node_count,
-        "timing": {
-            "planning": result.timing.planning_seconds,
-            "unitSearch": result.timing.unit_search_seconds,
-            "realization": result.timing.realization_seconds,
-            "validation": result.timing.validation_seconds,
-            "total": result.timing.total_seconds,
-        },
-    }
-
-    if cross_check:
-        check = crosscheck_polynomial(cert, result.target)
-        info["crossCheck"] = {
-            "backend": check.backend,
-            "status": check.status,
-            "flow": f"{check.flow.numerator}/{check.flow.denominator}",
-            "iterations": check.iterations,
-            "elapsed": check.elapsed_seconds,
-        }
-
-    return {"nodes": nodes, "edges": edges, "edgeFlows": edge_flows, "info": info}
+        return _error(str(e), 500)
 
 
 @app.post("/api/limit-module")
 async def api_limit_module(req: LimitModuleRequest):
     if not (0 < req.p < req.q):
-        return JSONResponse({"error": "需满足 0 < p < q"}, status_code=400)
+        return _error("需满足 0 < p < q")
     try:
         graph = await asyncio.to_thread(
-            _build_limit_module, req.p, req.q, req.optimize, req.search_range,
+            build_limit_module, req.p, req.q, req.optimize, req.search_range,
             req.reduction_depth, req.reduction_state_limit, req.cross_check,
         )
         return JSONResponse(graph)
     except Exception as e:
         logger.exception("limit-module failed")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return _error(str(e), 500)
 
 
 @app.post("/api/topoflow-layout")
-async def api_topoflow_layout(request: Request):
-    body = await request.json()
-    nodes, edges = _raw_graph_from_body(body)
-    require_cell = bool(body.get("requireBeltCell", True))
-    time_limit = float(body.get("timeLimit", 30.0))
-    min_size = int(body.get("minGrid", 3))
-
+async def api_topoflow_layout(req: TopoflowLayoutRequest):
     try:
         adapter = _get_layout_adapter()
-        topo_graph = _convert_for_topoflow(nodes, edges)
+        topo_graph = _convert_for_topoflow(req.nodes, req.edges)
     except Exception as e:
-        return JSONResponse({"status": "error", "error": str(e)}, status_code=400)
+        return _error(str(e))
 
     q: "queue.Queue" = queue.Queue()
 
     def run():
         def progress(rows: int, cols: int):
             q.put({"type": "progress", "rows": rows, "cols": cols})
-        result = _find_min_grid(adapter, topo_graph, require_cell,
-                                time_limit, min_size, progress)
+        result = _find_min_grid(adapter, topo_graph, req.require_belt_cell,
+                                req.time_limit, req.min_grid, progress)
         if result is None:
             q.put({"type": "result", "result": None})
         else:
@@ -902,5 +524,5 @@ if os.path.isdir(FRONTEND_DIR):
 
 if __name__ == "__main__":
     import uvicorn
-    print("Starting server: http://localhost:8000")
-    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=False)
+    print("Starting server: http://localhost:8081")
+    uvicorn.run("server:app", host="0.0.0.0", port=8081, reload=False)

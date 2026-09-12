@@ -25,6 +25,7 @@ native/**/target/
 *.pyd
 *.so
 *.dylib
+.z3-trace
 
 # Graph
 graph

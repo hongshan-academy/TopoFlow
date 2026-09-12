@@ -10,6 +10,7 @@ from time import perf_counter
 from typing import cast
 
 from ..leaves.interval import IntervalPlan, plan_interval, realize_interval
+from ..model.arithmetic import ceil_log3, factor_power_of_two, unit_topology_size
 from ..model.certificate import FlowCertificate
 from ..model.recipe import ReductionRecipe, TopologyCost
 from ..service.core import ConstructionCore
@@ -261,11 +262,7 @@ class ReductionPlanner:
         ):
             return None
         quotient_part = self._dyadic_numerator(quotient, exponent)
-        twos = 0
-        odd = q
-        while odd % 2 == 0:
-            twos += 1
-            odd //= 2
+        twos, odd = factor_power_of_two(q)
         remainder_part = self._dyadic_numerator(remainder, twos + exponent)
         if odd > 1:
             remainder_part = self._scale(odd, remainder_part, "binary-odd-core")
@@ -573,21 +570,11 @@ def _addition_pair_key(
 
 
 def _unit_lower_cost(denominator: int) -> TopologyCost:
-    twos = 0
-    odd = denominator
-    while odd % 2 == 0:
-        twos += 1
-        odd //= 2
-    odd_k = 0
-    capacity = 1
-    while capacity < odd:
-        capacity *= 3
-        odd_k += 1
-    odd_k = max(odd_k, 1) if odd > 1 else 0
-    internal = 2 * (twos + odd_k)
-    edges = 3 * twos + 4 * odd_k + 1
+    twos, odd = factor_power_of_two(denominator)
+    odd_k = ceil_log3(odd)
+    nodes, edges = unit_topology_size(twos, odd_k)
     return TopologyCost(
-        internal + 2,
+        nodes,
         edges,
         1,
         exact=odd in (1, 3),

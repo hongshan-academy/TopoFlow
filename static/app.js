@@ -145,8 +145,6 @@
     wgStatus: document.getElementById("wg-status"),
     ratioP: document.getElementById("ratio-p"),
     ratioQ: document.getElementById("ratio-q"),
-    ratioP: document.getElementById("ratio-p"),
-    ratioQ: document.getElementById("ratio-q"),
     ratioBtn: document.getElementById("ratio-split-btn"),
     ratioStatus: document.getElementById("ratio-status"),
     simRunBtn: document.getElementById("sim-run-btn"),
@@ -176,7 +174,11 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ nodes, edges }),
     });
-    if (!resp.ok) throw new Error(await resp.text());
+    if (!resp.ok) {
+      let msg;
+      try { msg = (await resp.json()).error; } catch { msg = await resp.text(); }
+      throw new Error(msg || `后端返回 ${resp.status}`);
+    }
     return resp.json();
   }
 
@@ -208,6 +210,7 @@
 
   async function triggerMilpSolve() {
     if (state.backendBusy) return;
+    state.backendBusy = true;
     state.message = "MILP 求解中...";
     state.flowGroups = [];
     state.currentFlowIdx = 0;
@@ -232,6 +235,8 @@
       state.currentStateIdx = 0;
       state.message = `MILP 求解失败: ${error.message}`;
       showToast(`MILP 求解失败: ${error.message}`, "error");
+    } finally {
+      state.backendBusy = false;
     }
     render();
   }
@@ -270,6 +275,7 @@
 
   async function triggerNativeSolve() {
     if (state.backendBusy) return;
+    state.backendBusy = true;
     state.message = "Rust 求解中...";
     state.flowGroups = [];
     state.currentFlowIdx = 0;
@@ -287,6 +293,8 @@
       state.flowGroups = [];
       state.message = `Rust 求解失败: ${error.message}`;
       showToast(`Rust 求解失败: ${error.message}`, "error");
+    } finally {
+      state.backendBusy = false;
     }
     render();
   }
@@ -943,16 +951,10 @@
       }
       state.selected = { kind: "node", id: nodeId };
       const node = getNode(nodeId);
-      const rect = els.svg.getBoundingClientRect();
-      // 记录起始图坐标 + 屏幕比例，拖拽时用屏幕像素差换算，避免 getScreenCTM 的反馈振荡
       state.drag = {
         nodeId,
-        startNodeX: node.x,
-        startNodeY: node.y,
-        startClientX: event.clientX,
-        startClientY: event.clientY,
-        scaleX: state.viewport.width / rect.width,
-        scaleY: state.viewport.height / rect.height,
+        offsetX: point.x - node.x,
+        offsetY: point.y - node.y,
       };
       render();
       event.preventDefault();
@@ -975,19 +977,16 @@
     }
 
     if (state.mode === "select") {
+      const screenMatrix = els.svg.getScreenCTM();
       state.blankHold = true;
-      const rect = els.svg.getBoundingClientRect();
       state.pan = {
-        startClientX: event.clientX,
-        startClientY: event.clientY,
-        scaleX: state.viewport.width / rect.width,
-        scaleY: state.viewport.height / rect.height,
+        startPoint: point,
+        startScreenInverse: screenMatrix ? screenMatrix.inverse() : null,
         startViewportX: state.viewport.x,
         startViewportY: state.viewport.y,
       };
       state.selected = null;
       state.message = "已取消选择，可拖动画布。";
-      event.preventDefault();
       render();
       return;
     }
@@ -1005,23 +1004,24 @@
 
   function onDocumentPointerMove(event) {
     if (state.drag) {
-      const node = getNode(state.drag.nodeId);
-      // 用 pointerdown 时固定的比例 × 屏幕像素差换算，避免 getScreenCTM 反馈振荡；不限图边界
-      node.x = state.drag.startNodeX + (event.clientX - state.drag.startClientX) * state.drag.scaleX;
-      node.y = state.drag.startNodeY + (event.clientY - state.drag.startClientY) * state.drag.scaleY;
-      // 轻量更新 DOM：不重建全部 SVG，只更新节点位置和相连边的路径
-      _updateNodeDom(state.drag.nodeId);
-      _updateConnectedEdgesDom(state.drag.nodeId);
+      const point = getSvgPoint(event);
+      moveNode(state.drag.nodeId, {
+        x: point.x - state.drag.offsetX,
+        y: point.y - state.drag.offsetY,
+      });
+      render();
       return;
     }
-    if (!state.pan) return;
-    state.viewport.x =
-      state.pan.startViewportX - (event.clientX - state.pan.startClientX) * state.pan.scaleX;
-    state.viewport.y =
-      state.pan.startViewportY - (event.clientY - state.pan.startClientY) * state.pan.scaleY;
-    // 轻量更新 viewBox，不触发全量 render
-    els.svg.setAttribute("viewBox",
-      `${state.viewport.x} ${state.viewport.y} ${state.viewport.width} ${state.viewport.height}`);
+
+    if (!state.pan) {
+      return;
+    }
+    const point = state.pan.startScreenInverse
+      ? new DOMPoint(event.clientX, event.clientY).matrixTransform(state.pan.startScreenInverse)
+      : getSvgPoint(event);
+    state.viewport.x = state.pan.startViewportX - (point.x - state.pan.startPoint.x);
+    state.viewport.y = state.pan.startViewportY - (point.y - state.pan.startPoint.y);
+    render();
   }
 
   function onDocumentPointerUp() {
@@ -1067,37 +1067,44 @@
     const node = {
       id: nextId(type),
       type,
-      x: point.x,
-      y: point.y,
+      x: clamp(point.x, GRAPH_BOUNDS.padding, GRAPH_BOUNDS.width - GRAPH_BOUNDS.padding),
+      y: clamp(point.y, GRAPH_BOUNDS.padding, GRAPH_BOUNDS.height - GRAPH_BOUNDS.padding),
     };
     state.graph.nodes.push(node);
     state.selected = { kind: "node", id: node.id };
-    rebuildSimulator(`已添加 ${node.id}。`);
+    rebuildSimulator(`${TYPE_LABELS[type]} ${node.id} 已添加。`);
+    render();
+  }
+
+  function moveNode(nodeId, point) {
+    const node = getNode(nodeId);
+    node.x = clamp(point.x, GRAPH_BOUNDS.padding, GRAPH_BOUNDS.width - GRAPH_BOUNDS.padding);
+    node.y = clamp(point.y, GRAPH_BOUNDS.padding, GRAPH_BOUNDS.height - GRAPH_BOUNDS.padding);
   }
 
   function deleteSelectedObject() {
-    if (!state.selected) return;
+    if (!state.selected) {
+      return;
+    }
+
     if (state.selected.kind === "node") {
       const nodeId = state.selected.id;
       state.drag = null;
       state.pan = null;
-      if (state.draftEdgeFrom === nodeId) state.draftEdgeFrom = null;
-      state.graph.nodes = state.graph.nodes.filter((n) => n.id !== nodeId);
-      state.graph.edges = state.graph.edges.filter(
-        (e) => e.from !== nodeId && e.to !== nodeId
-      );
-      state.selected = state.graph.nodes[0]
-        ? { kind: "node", id: state.graph.nodes[0].id }
-        : null;
+      if (state.draftEdgeFrom === nodeId) {
+        state.draftEdgeFrom = null;
+      }
+      state.graph.nodes = state.graph.nodes.filter((node) => node.id !== nodeId);
+      state.graph.edges = state.graph.edges.filter((edge) => edge.from !== nodeId && edge.to !== nodeId);
+      state.selected = state.graph.nodes[0] ? { kind: "node", id: state.graph.nodes[0].id } : null;
       rebuildSimulator(`节点 ${nodeId} 已删除。`);
     } else {
       const edgeId = state.selected.id;
-      state.graph.edges = state.graph.edges.filter((e) => e.id !== edgeId);
-      state.selected = state.graph.nodes[0]
-        ? { kind: "node", id: state.graph.nodes[0].id }
-        : null;
+      state.graph.edges = state.graph.edges.filter((edge) => edge.id !== edgeId);
+      state.selected = state.graph.nodes[0] ? { kind: "node", id: state.graph.nodes[0].id } : null;
       rebuildSimulator(`边 ${edgeId} 已删除。`);
     }
+    render();
   }
 
   function handleEdgeNodeClick(nodeId) {
@@ -1145,6 +1152,7 @@
       toSlot,
     });
     rebuildSimulator(`已连接 ${fromId} -> ${toId}。`);
+    render();
     return { ok: true, message: `已连接 ${fromId} -> ${toId}。` };
   }
 
@@ -1207,25 +1215,24 @@
     const simSnap = getSimSnapshot();
 
     const edgesMarkup = state.graph.edges.map((edge) => {
-      const path = computeEdgePath(edge);
+      const pathInfo = computeEdgePath(edge);
+      const activeClass = (simSnap?.edges?.[edge.id]?.queue || []).length > 0 ? " is-active" : "";
       const selectedClass =
         state.selected?.kind === "edge" && state.selected.id === edge.id ? " is-selected" : "";
       const stateClass = currSol?.edgeBlocked?.[edge.id] === "fb" ? " is-blocked"
         : currSol?.edgeBlocked?.[edge.id] === "sb" ? " is-semi" : "";
       const continuousFlow = currSol?.edgeFlows?.[edge.id] || null;
       const continuousLabel = continuousFlow
-        ? computeEdgeLabelPosition(edge, 0, 0)
+        ? computeEdgeLabelPosition(edge, 0)
         : null;
-      const simEdge = simSnap?.edges?.[edge.id] || null;
-      const simQueue = simEdge ? (simEdge.queue || []).length : 0;
-      const simActiveClass = simQueue > 0 ? " is-active" : "";
+      const simQueue = simSnap ? (simSnap.edges?.[edge.id]?.queue || []).length : 0;
       const simLabel = simSnap
-        ? computeEdgeLabelPosition(edge, continuousFlow ? 1 : 0, 0)
+        ? computeEdgeLabelPosition(edge, continuousFlow ? 1 : 0)
         : null;
       return `
-        <g class="edge-group${selectedClass}${stateClass}${simActiveClass}" data-edge-id="${edge.id}">
-          <path class="edge-hit" d="${path}"></path>
-          <path class="edge-line" d="${path}"></path>
+        <g class="edge-group${activeClass}${selectedClass}${stateClass}" data-edge-id="${edge.id}">
+          <path class="edge-hit" d="${pathInfo.d}"></path>
+          <path class="edge-line" d="${pathInfo.d}"></path>
           ${
             continuousFlow && continuousLabel
               ? `<text class="edge-flow edge-flow-continuous" x="${continuousLabel.x}" y="${continuousLabel.y}" text-anchor="middle">${escapeHtml(continuousFlow.text)}</text>`
@@ -1245,18 +1252,17 @@
     const nodesMarkup = state.graph.nodes.map((node) => {
       const selectedClass =
         state.selected?.kind === "node" && state.selected.id === node.id ? " is-selected" : "";
+      const busyClass = simSnap?.nodes?.[node.id]?.hasItem ? " has-item" : "";
       const edgeStartClass = state.draftEdgeFrom === node.id ? " is-edge-start" : "";
       const continuousNodeFlow = currSol?.nodeFlows?.[node.id] || null;
-      const simNode = simSnap?.nodes?.[node.id] || null;
-      const busyClass = simNode?.hasItem ? " has-item" : "";
       return `
-        <g class="node${selectedClass}${edgeStartClass}${busyClass}" data-node-id="${node.id}" transform="translate(${node.x}, ${node.y})">
+        <g class="node${selectedClass}${busyClass}${edgeStartClass}" data-node-id="${node.id}" transform="translate(${node.x}, ${node.y})">
           <circle r="${NODE_RADIUS}" fill="${NODE_COLORS[node.type]}"></circle>
           <text text-anchor="middle" dy="-2">${escapeHtml(node.id)}</text>
           <text class="node-type" text-anchor="middle" dy="14">${TYPE_LABELS[node.type]}</text>
           ${
             continuousNodeFlow
-              ? `<text class="node-flow node-flow-continuous" text-anchor="middle" dy="46">${escapeHtml(continuousNodeFlow.text)}</text>`
+              ? `<text class="node-flow node-flow-continuous" text-anchor="middle" dy="59">${escapeHtml(continuousNodeFlow.text)}</text>`
               : ""
           }
         </g>
@@ -1273,6 +1279,7 @@
           <path d="M0,0 L0,6 L9,3 z" fill="#667085"></path>
         </marker>
       </defs>
+      <rect class="graph-boundary" x="0" y="0" width="${GRAPH_BOUNDS.width}" height="${GRAPH_BOUNDS.height}"></rect>
       <g class="edges">${edgesMarkup.join("")}${draftMarkup}</g>
       <g class="nodes">${nodesMarkup.join("")}</g>
     `;
@@ -1306,44 +1313,70 @@
     };
   }
 
+  function buildParallelIndex() {
+    const groups = new Map();
+    for (let i = 0; i < state.graph.edges.length; i++) {
+      const edge = state.graph.edges[i];
+      const a = edge.from;
+      const b = edge.to;
+      const key = a < b ? a + "<->" + b : b + "<->" + a;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(edge.id);
+    }
+    return groups;
+  }
+
   function computeEdgePath(edge) {
     const from = getNode(edge.from);
     const to = getNode(edge.to);
-    const siblings = state.graph.edges
-      .filter(
-        (c) =>
-          (c.from === edge.from && c.to === edge.to) ||
-          (c.from === edge.to && c.to === edge.from)
-      )
-      .sort((a, b) => a.id.localeCompare(b.id));
-    const idx = siblings.findIndex((c) => c.id === edge.id);
-    const center = (siblings.length - 1) / 2;
-    const offset = (idx - center) * 18;
-    const pts = computeEdgePoints(from, to, offset);
-    return `M ${pts.x1} ${pts.y1} Q ${pts.mx} ${pts.my} ${pts.x2} ${pts.y2}`;
-  }
 
-  function computeEdgeLabelPosition(edge, lane = 0, verticalOffset = 0) {
-    const from = getNode(edge.from);
-    const to = getNode(edge.to);
-    const siblings = state.graph.edges
-      .filter(
-        (c) =>
-          (c.from === edge.from && c.to === edge.to) ||
-          (c.from === edge.to && c.to === edge.from)
-      )
-      .sort((a, b) => a.id.localeCompare(b.id));
-    const idx = siblings.findIndex((c) => c.id === edge.id);
-    const center = (siblings.length - 1) / 2;
-    const offset = (idx - center) * 18;
-    const pts = computeEdgePoints(from, to, offset);
+    const parallelGroups = buildParallelIndex();
+    const lowId = edge.from < edge.to ? edge.from : edge.to;
+    const highId = edge.from < edge.to ? edge.to : edge.from;
+    const groupKey = lowId + "<->" + highId;
+    const ids = parallelGroups.get(groupKey) || [edge.id];
+    const idx = ids.indexOf(edge.id);
+    const offset = (idx - (ids.length - 1) / 2) * 78;
+
+    const low = getNode(lowId);
+    const high = getNode(highId);
+    const cdx = high.x - low.x;
+    const cdy = high.y - low.y;
+    const clen = Math.hypot(cdx, cdy) || 1;
+    const px = -cdy / clen;
+    const py = cdx / clen;
+
     const dx = to.x - from.x;
     const dy = to.y - from.y;
     const len = Math.hypot(dx, dy) || 1;
-    const perpX = -dy / len;
-    const perpY = dx / len;
-    const lo = lane * 13;
-    return { x: pts.mx + perpX * lo, y: pts.my + perpY * lo - 8 + verticalOffset };
+    const ux = dx / len;
+    const uy = dy / len;
+
+    const sx = from.x + ux * NODE_RADIUS;
+    const sy = from.y + uy * NODE_RADIUS;
+    const tx = to.x - ux * (NODE_RADIUS + 5);
+    const ty = to.y - uy * (NODE_RADIUS + 5);
+    const cx = (sx + tx) / 2 + px * offset;
+    const cy = (sy + ty) / 2 + py * offset;
+
+    const labelX = (sx + 2 * cx + tx) / 4 + px * 8;
+    const labelY = (sy + 2 * cy + ty) / 4 + py * 8;
+
+    return {
+      d: "M " + sx + " " + sy + " Q " + cx + " " + cy + " " + tx + " " + ty,
+      labelX: labelX,
+      labelY: labelY,
+    };
+  }
+
+  function computeEdgeLabelPosition(edge, lane, verticalOffset) {
+    lane = lane || 0;
+    verticalOffset = verticalOffset || 0;
+    const pathInfo = computeEdgePath(edge);
+    return {
+      x: pathInfo.labelX + lane * 13,
+      y: pathInfo.labelY - 8 + verticalOffset,
+    };
   }
 
   function getSvgPoint(event) {
@@ -1365,29 +1398,6 @@
       edge: "连边模式：先点击起点，再点击终点；Esc 返回选择模式。",
     };
     return hints[mode] || "";
-  }
-
-  // ── 轻量 DOM 更新（拖拽时避免全量重绘） ─────────────────────
-
-  function _updateNodeDom(nodeId) {
-    const node = getNode(nodeId);
-    const el = els.svg.querySelector(`[data-node-id="${nodeId}"]`);
-    if (el) el.setAttribute("transform", `translate(${node.x}, ${node.y})`);
-  }
-
-  function _updateConnectedEdgesDom(nodeId) {
-    const connected = state.graph.edges.filter(
-      (e) => e.from === nodeId || e.to === nodeId);
-    for (const edge of connected) {
-      const path = computeEdgePath(edge);
-      // 更新主路径（.edge-line）和点击区域（.edge-hit）
-      const group = els.svg.querySelector(`[data-edge-id="${edge.id}"]`);
-      if (!group) continue;
-      const hit = group.querySelector(".edge-hit");
-      const line = group.querySelector(".edge-line");
-      if (hit) hit.setAttribute("d", path);
-      if (line) line.setAttribute("d", path);
-    }
   }
 
   function findFirstEmptySlot(size, occupiedSlots) {
@@ -1518,8 +1528,7 @@
 
   // ── 导入 JSON 图 ─────────────────────────────────────────────
 
-  /** 暴露给内联按钮的导入函数 */
-  window._importGraph = function _importGraph(graph) {
+  function graphFromImported(graph) {
     const ng = { nodes: [], edges: [] };
     for (const n of graph.nodes) {
       ng.nodes.push({ id: n.id, type: n.type, x: n.x, y: n.y });
@@ -1535,10 +1544,19 @@
       );
       ng.edges.push({ id: e.id, from: e.from, to: e.to, fromSlot, toSlot });
     }
+    return ng;
+  }
+
+  function applyImportedGraph(ng) {
     state.graph = ng;
     state.counters = buildCounters(ng);
     state.selected = ng.nodes.length > 0 ? { kind: "node", id: ng.nodes[0].id } : null;
     state.viewport = { ...DEFAULT_VIEWPORT };
+  }
+
+  /** 暴露给内联按钮的导入函数 */
+  window._importGraph = function _importGraph(graph) {
+    applyImportedGraph(graphFromImported(graph));
     rebuildSimulator(`已导入图`);
   };
 
@@ -1572,25 +1590,8 @@
       return;
     }
     // 构建新图
-    const ng = { nodes: [], edges: [] };
-    for (const n of graph.nodes) {
-      ng.nodes.push({ id: n.id, type: n.type, x: n.x, y: n.y });
-    }
-    for (const e of graph.edges) {
-      const fromSlot = e.fromSlot ?? findFirstEmptySlot(
-        NODE_CAPACITY[_getNodeType(e.from, ng)].maxOut,
-        ng.edges.filter((c) => c.from === e.from).map((c) => c.fromSlot ?? 0)
-      );
-      const toSlot = e.toSlot ?? findFirstEmptySlot(
-        NODE_CAPACITY[_getNodeType(e.to, ng)].maxIn,
-        ng.edges.filter((c) => c.to === e.to).map((c) => c.toSlot ?? 0)
-      );
-      ng.edges.push({ id: e.id, from: e.from, to: e.to, fromSlot, toSlot });
-    }
-    state.graph = ng;
-    state.counters = buildCounters(ng);
-    state.selected = ng.nodes.length > 0 ? { kind: "node", id: ng.nodes[0].id } : null;
-    state.viewport = { ...DEFAULT_VIEWPORT };
+    const ng = graphFromImported(graph);
+    applyImportedGraph(ng);
     els.importStatus.textContent = `已导入（${ng.nodes.length}节点 / ${ng.edges.length}条边）`;
     rebuildSimulator(`已导入图`);
   }

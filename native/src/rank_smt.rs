@@ -154,14 +154,8 @@ pub fn solve(
         optimize.assert(&incoming._eq(&outgoing));
     }
 
-    for first in 0..m {
-        for other in (first + 1)..m {
-            if graph.edges[first].u == graph.edges[other].u
-                && graph.edges[first].v == graph.edges[other].v
-            {
-                optimize.assert(&flow[first]._eq(&flow[other]));
-            }
-        }
+    for (first, other) in graph.parallel_pairs() {
+        optimize.assert(&flow[first]._eq(&flow[other]));
     }
 
     for node in 0..graph.names.len() {
@@ -275,17 +269,11 @@ pub fn solve(
         }
         rows.push((row, Rat::zero()));
     }
-    for first in 0..m {
-        for other in (first + 1)..m {
-            if graph.edges[first].u == graph.edges[other].u
-                && graph.edges[first].v == graph.edges[other].v
-            {
-                let mut row = vec![Rat::zero(); m];
-                row[first] = Rat::one();
-                row[other] = -Rat::one();
-                rows.push((row, Rat::zero()));
-            }
-        }
+    for (first, other) in graph.parallel_pairs() {
+        let mut row = vec![Rat::zero(); m];
+        row[first] = Rat::one();
+        row[other] = -Rat::one();
+        rows.push((row, Rat::zero()));
     }
     for edge in 0..m {
         if is_fixed[edge] {
@@ -318,13 +306,16 @@ pub fn solve(
 
     let (exact_flows, rank_full) = match solve_exact(rows, m) {
         Ok(result) => result,
-        Err(_) => (
-            floats
-                .iter()
-                .map(|&value| Rat::from_f64(value).unwrap_or_else(Rat::zero))
-                .collect(),
-            false,
-        ),
+        Err(err) => {
+            eprintln!("rank-smt: exact reconstruction failed ({err}); using float approximation");
+            (
+                floats
+                    .iter()
+                    .map(|&value| Rat::from_f64(value).unwrap_or_else(Rat::zero))
+                    .collect(),
+                false,
+            )
+        }
     };
     let nonnegative = exact_flows.iter().all(|value| value >= &Rat::zero());
     let consistent = rank_full
