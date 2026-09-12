@@ -145,12 +145,10 @@
     wgStatus: document.getElementById("wg-status"),
     ratioP: document.getElementById("ratio-p"),
     ratioQ: document.getElementById("ratio-q"),
+    ratioP: document.getElementById("ratio-p"),
+    ratioQ: document.getElementById("ratio-q"),
     ratioBtn: document.getElementById("ratio-split-btn"),
     ratioStatus: document.getElementById("ratio-status"),
-    limitP: document.getElementById("limit-p"),
-    limitQ: document.getElementById("limit-q"),
-    limitBtn: document.getElementById("limit-module-btn"),
-    limitStatus: document.getElementById("limit-status"),
     simRunBtn: document.getElementById("sim-run-btn"),
     simPlayBtn: document.getElementById("sim-play-btn"),
     simPrevBtn: document.getElementById("sim-prev-btn"),
@@ -442,48 +440,6 @@
       showToast(`比例二分图已生成: ${info.ratio}`, "info");
     } catch (error) {
       els.ratioStatus.textContent = `解算失败: ${error.message}`;
-      showToast(`解算失败: ${error.message}`, "error");
-    } finally {
-      state.backendBusy = false;
-    }
-  }
-
-  // ── 标准限流计算（单输入单输出模块） ────────────────────────────
-  async function apiLimitModule(p, q) {
-    const resp = await fetch("/api/limit-module", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ p, q }),
-    });
-    if (!resp.ok) {
-      const e = await resp.json().catch(() => ({}));
-      throw new Error(e.error || `HTTP ${resp.status}`);
-    }
-    return resp.json();
-  }
-
-  async function triggerLimitModule() {
-    if (state.backendBusy) return;
-    const p = parseInt(els.limitP.value, 10);
-    const q = parseInt(els.limitQ.value, 10);
-    if (!Number.isInteger(p) || !Number.isInteger(q) || p <= 0 || q <= 0) {
-      els.limitStatus.textContent = "请输入正整数 p、q";
-      return;
-    }
-    state.backendBusy = true;
-    els.limitStatus.textContent = `正在解算限流 ${p}:${q}…`;
-    try {
-      const data = await apiLimitModule(p, q);
-      if (!data.nodes || !data.nodes.length) {
-        els.limitStatus.textContent = data.error || "解算失败";
-        return;
-      }
-      // 结算结果覆盖当前图
-      window._importGraph({ nodes: data.nodes, edges: data.edges });
-      els.limitStatus.textContent = `已生成限流模块 ${p}:${q}`;
-      showToast(`限流模块已生成: ${p}:${q}`, "info");
-    } catch (error) {
-      els.limitStatus.textContent = `解算失败: ${error.message}`;
       showToast(`解算失败: ${error.message}`, "error");
     } finally {
       state.backendBusy = false;
@@ -873,7 +829,6 @@
     els.wgImportBtn.addEventListener("click", onWgImport);
     els.wgMergeBtn.addEventListener("click", onWgImportMerge);
     els.ratioBtn.addEventListener("click", triggerRatioSplit);
-    els.limitBtn.addEventListener("click", triggerLimitModule);
 
     // 离散仿真
     els.simRunBtn.addEventListener("click", triggerSimulate);

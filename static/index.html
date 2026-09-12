@@ -464,16 +464,6 @@
         <div id="ratio-status" style="font-size:13px;color:var(--muted);min-height:1.2em"></div>
 
         <hr style="margin:14px 0;border:none;border-top:1px solid var(--line)" />
-        <h2>标准限流计算</h2>
-        <div class="buttons">
-          <input id="limit-p" type="number" min="1" value="5" style="width:72px" placeholder="p" title="目标限流比例分子 p（1/3 &lt; p/q &lt; 1/2）" />
-          <span style="color:var(--muted)">:</span>
-          <input id="limit-q" type="number" min="3" value="13" style="width:72px" placeholder="q" title="目标限流比例分母 q" />
-          <button id="limit-module-btn">解算限流模块</button>
-        </div>
-        <div id="limit-status" style="font-size:13px;color:var(--muted);min-height:1.2em"></div>
-
-        <hr style="margin:14px 0;border:none;border-top:1px solid var(--line)" />
         <h2>精确构造 (p/q 阻塞流)</h2>
         <div class="buttons">
           <input id="construct-p" type="number" min="1" value="325" style="width:72px" placeholder="p" title="目标流量分子 p" />

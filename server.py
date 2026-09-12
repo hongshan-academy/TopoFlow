@@ -7,7 +7,6 @@ Endpoints
   - POST /api/simulate        discrete-event simulation (frame replay)
   - POST /api/solve-native    Rust native solve (rank-smt / stable)
   - POST /api/ratio-split     standard ratio-split module builder
-  - POST /api/limit-module    standard limit-module builder
   - POST /api/construct       exact p/q blocking-flow construction (constructor)
   - POST /api/topoflow-layout physical layout (layout / Z3 bridge, NDJSON stream)
 """
@@ -511,109 +510,6 @@ def _build_ratio_graph(p: int, q: int, max_share: float | None = None) -> dict:
     }
 
 
-def _finalize_limit_graph(nodes: list[dict], edges: list[dict]) -> dict:
-    _layout_nodes(nodes, edges, exclude_to={"C1"})
-    for i, e in enumerate(edges):
-        e["id"] = f"e{i}"
-    return {"nodes": nodes, "edges": edges}
-
-
-def _build_limit_module(p: int, q: int) -> dict:
-    r = p / q
-    if abs(r - 1 / 3) < 1e-9:
-        edge_list = [("S1", "C1"), ("S1", "C1"), ("C1", "S1"), ("S1", "Out1"), ("In1", "C1")]
-    elif abs(r - 1 / 2) < 1e-9:
-        edge_list = [("S1", "C1"), ("C1", "S1"), ("S1", "Out1"), ("In1", "C1")]
-    elif 1 / 3 < r < 1 / 2:
-        edge_list = None
-    else:
-        raise ValueError("p/q 必须位于开区间 (1/3, 1/2)")
-
-    if edge_list is not None:
-        nodes = [
-            {"id": "In1", "type": "In"},
-            {"id": "Out1", "type": "Out"},
-            {"id": "S1", "type": "S"},
-            {"id": "C1", "type": "C"},
-        ]
-        edges = [{"from": f, "to": t} for f, t in edge_list]
-        return _finalize_limit_graph(nodes, edges)
-
-    sub = _build_ratio_graph(q - 2 * p, p, max_share=q / p - 2)
-    cset = {n["id"] for n in sub["nodes"] if n["type"] == "C"}
-    rename = {"In_1": "S1", "Out_1": "C1", "Out_2": "C2"}
-
-    froms = defaultdict(list)
-    for e in sub["edges"]:
-        froms[e["to"]].append(e["from"])
-    up_c = []
-    stack, seen = ["Out_2"], set()
-    while stack:
-        u = stack.pop()
-        if u in seen:
-            continue
-        seen.add(u)
-        for f in froms.get(u, []):
-            if f in cset and f not in up_c:
-                up_c.append(f)
-                stack.append(f)
-    top_c = next((c for c in up_c if all(s not in cset for s in froms.get(c, []))), None)
-
-    nodes = []
-    for n in sub["nodes"]:
-        nn = rename.get(n["id"])
-        if nn == "C2":
-            continue
-        typ = n["type"]
-        if nn == "S1":
-            typ = "S"
-        elif nn == "C1":
-            typ = "C"
-        nodes.append({"id": nn or n["id"], "type": typ})
-    nodes.append({"id": "In1", "type": "In"})
-    nodes.append({"id": "Out1", "type": "Out"})
-
-    edges = []
-    out2_edges = []
-    for e in sub["edges"]:
-        f = rename.get(e["from"], e["from"])
-        t = rename.get(e["to"], e["to"])
-        item = {"from": f, "to": t}
-        if "w" in e:
-            item["w"] = e["w"]
-        if t == "C2":
-            t = "C1"
-            item["to"] = t
-            out2_edges.append(item)
-        edges.append(item)
-
-    edges.append({"from": "In1", "to": "C1"})
-    edges.append({"from": "S1", "to": "Out1"})
-    edges.append({"from": "C1", "to": "S1"})
-    if top_c is not None:
-        top_in = [e for e in edges if e["to"] == top_c]
-        if len(top_in) >= 3:
-            c_new = "C_new"
-            nodes.append({"id": c_new, "type": "C"})
-            top_in.sort(key=lambda e: e.get("w", 1))
-            for me in top_in[:2]:
-                edges.remove(me)
-                edges.append({"from": me["from"], "to": c_new})
-            edges.append({"from": "S1", "to": c_new})
-            edges.append({"from": c_new, "to": top_c})
-        else:
-            edges.append({"from": "S1", "to": top_c})
-    elif out2_edges:
-        oe = out2_edges[0]
-        c_new = "C_new"
-        nodes.append({"id": c_new, "type": "C"})
-        edges.remove(oe)
-        edges.append({"from": oe["from"], "to": c_new})
-        edges.append({"from": c_new, "to": "C1"})
-        edges.append({"from": "S1", "to": c_new})
-
-    return _finalize_limit_graph(nodes, edges)
-
 
 # -- Rust native solver (topoflow_native) -----------------------------------
 _MINGW_BIN = r"C:\msys64\ucrt64\bin"
@@ -896,23 +792,6 @@ async def api_ratio_split(request: Request):
         return JSONResponse(graph)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
-
-
-@app.post("/api/limit-module")
-async def api_limit_module(request: Request):
-    body = await request.json()
-    try:
-        p = int(body.get("p"))
-        q = int(body.get("q"))
-    except (TypeError, ValueError):
-        return JSONResponse({"error": "请输入正整数 p、q"}, status_code=400)
-    if p <= 0 or q <= 0:
-        return JSONResponse({"error": "需满足 p、q 均为正整数"}, status_code=400)
-    try:
-        graph = await asyncio.to_thread(_build_limit_module, p, q)
-        return JSONResponse(graph)
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=400)
 
 
 @app.post("/api/solve-native")
