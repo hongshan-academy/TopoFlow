@@ -841,7 +841,7 @@ def _add_terminal_constraints(
         facility_id = adapted.node_to_facility[node]
         facility_vars = artifacts.facilities[facility_id]
         ports = adapted.problem.facilities[facility_id].ports[port_kind]
-        choice = artifacts.model.new_int_var(
+        choice = artifacts.model.NewIntVar(
             0, len(ports) - 1, f"{edge.edge_id.replace('-', '_')}_external_port"
         )
         required_direction = TERMINAL_DIRECTIONS[anchor.side]
@@ -851,24 +851,24 @@ def _add_terminal_constraints(
             for rotation in range(4)
             if (port[0] + rotation) % 4 == required_direction
         ]
-        artifacts.model.add_allowed_assignments([choice, facility_vars.rotation], allowed)
+        artifacts.model.AddAllowedAssignments([choice, facility_vars.rotation], allowed)
 
         if anchor.side == "left":
-            artifacts.model.add(facility_vars.row == anchor.offset)
-            artifacts.model.add(facility_vars.column == 0)
+            artifacts.model.Add(facility_vars.row == anchor.offset)
+            artifacts.model.Add(facility_vars.column == 0)
         elif anchor.side == "right":
-            artifacts.model.add(facility_vars.row == anchor.offset)
-            artifacts.model.add(facility_vars.column == adapted.problem.columns - 1)
+            artifacts.model.Add(facility_vars.row == anchor.offset)
+            artifacts.model.Add(facility_vars.column == adapted.problem.columns - 1)
         elif anchor.side == "top":
-            artifacts.model.add(facility_vars.row == 0)
-            artifacts.model.add(facility_vars.column == anchor.offset)
+            artifacts.model.Add(facility_vars.row == 0)
+            artifacts.model.Add(facility_vars.column == anchor.offset)
         else:
-            artifacts.model.add(facility_vars.row == adapted.problem.rows - 1)
-            artifacts.model.add(facility_vars.column == anchor.offset)
+            artifacts.model.Add(facility_vars.row == adapted.problem.rows - 1)
+            artifacts.model.Add(facility_vars.column == anchor.offset)
 
         port_key = (facility_id, port_kind)
         for used_choice in used_by_port.get(port_key, []):
-            artifacts.model.add(choice != used_choice)
+            artifacts.model.Add(choice != used_choice)
         used_by_port.setdefault(port_key, []).append(choice)
         choices[edge.edge_id] = choice
     return choices
@@ -973,36 +973,36 @@ def solve_facility_placement(
     cells: list[Any] = []
     cell_count = adapted.problem.rows * adapted.problem.columns
     for facility_id in range(len(adapted.problem.facilities)):
-        row = model.new_int_var(0, adapted.problem.rows - 1, f"placement_{facility_id}_row")
-        column = model.new_int_var(0, adapted.problem.columns - 1, f"placement_{facility_id}_column")
-        cell = model.new_int_var(0, cell_count - 1, f"placement_{facility_id}_cell")
-        model.add(cell == row * adapted.problem.columns + column)
+        row = model.NewIntVar(0, adapted.problem.rows - 1, f"placement_{facility_id}_row")
+        column = model.NewIntVar(0, adapted.problem.columns - 1, f"placement_{facility_id}_column")
+        cell = model.NewIntVar(0, cell_count - 1, f"placement_{facility_id}_cell")
+        model.Add(cell == row * adapted.problem.columns + column)
         rows.append(row)
         columns.append(column)
         cells.append(cell)
-    model.add_all_different(cells)
+    model.AddAllDifferent(cells)
 
     for facility_id, (row_value, column_value) in _terminal_positions(adapted).items():
-        model.add(rows[facility_id] == row_value)
-        model.add(columns[facility_id] == column_value)
+        model.Add(rows[facility_id] == row_value)
+        model.Add(columns[facility_id] == column_value)
 
     distances: list[Any] = []
     for edge in adapted.internal_edges:
         source = adapted.node_to_facility[edge.source]
         target = adapted.node_to_facility[edge.target]
-        row_delta = model.new_int_var(0, adapted.problem.rows - 1, f"placement_{edge.edge_id}_dr")
-        column_delta = model.new_int_var(0, adapted.problem.columns - 1, f"placement_{edge.edge_id}_dc")
-        distance = model.new_int_var(
+        row_delta = model.NewIntVar(0, adapted.problem.rows - 1, f"placement_{edge.edge_id}_dr")
+        column_delta = model.NewIntVar(0, adapted.problem.columns - 1, f"placement_{edge.edge_id}_dc")
+        distance = model.NewIntVar(
             1,
             max(1, adapted.problem.rows + adapted.problem.columns - 2),
             f"placement_{edge.edge_id}_distance",
         )
         model.add_abs_equality(row_delta, rows[source] - rows[target])
         model.add_abs_equality(column_delta, columns[source] - columns[target])
-        model.add(distance == row_delta + column_delta)
+        model.Add(distance == row_delta + column_delta)
         distances.append(distance)
     if distances:
-        model.minimize(sum(distances))
+        model.Minimize(sum(distances))
 
     normalized = normalize_layout_hint(adapted, prior_hint)
     if normalized is not None:
@@ -1013,16 +1013,16 @@ def solve_facility_placement(
             facility_id = int(item["id"])
             row_value = int(item["row"])
             column_value = int(item["column"])
-            model.add_hint(rows[facility_id], row_value)
-            model.add_hint(columns[facility_id], column_value)
-            model.add_hint(cells[facility_id], row_value * adapted.problem.columns + column_value)
+            model.AddHint(rows[facility_id], row_value)
+            model.AddHint(columns[facility_id], column_value)
+            model.AddHint(cells[facility_id], row_value * adapted.problem.columns + column_value)
 
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = time_limit
     solver.parameters.num_search_workers = workers
     solver.parameters.relative_gap_limit = 0.15
     solver.parameters.log_search_progress = debug
-    status = solver.solve(model)
+    status = solver.Solve(model)
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         return normalized
     return {
@@ -1031,13 +1031,13 @@ def solve_facility_placement(
         "facilities": [
             {
                 "id": facility_id,
-                "row": solver.value(rows[facility_id]),
-                "column": solver.value(columns[facility_id]),
+                "row": solver.Value(rows[facility_id]),
+                "column": solver.Value(columns[facility_id]),
             }
             for facility_id in range(len(rows))
         ],
         "source": "placement-pre-solve",
-        "objective": int(solver.objective_value) if distances else 0,
+        "objective": int(solver.ObjectiveValue()) if distances else 0,
         "status": "OPTIMAL" if status == cp_model.OPTIMAL else "FEASIBLE",
     }
 
@@ -1080,7 +1080,7 @@ def solve_topoflow(
     ):
         raise ValueError("route_length_upper_bound must be a non-negative integer")
     started_at = time.monotonic()
-    import ilpbridge as cp_model
+    from ortools.sat.python import cp_model
 
     available_for_placement = wall_time_limit
     if available_for_placement is None:
@@ -1107,7 +1107,7 @@ def solve_topoflow(
         progress_callback("building")
     artifacts = solver_module.build_model(adapted.problem, cp_model, effective_hint)
     if route_length_upper_bound is not None:
-        artifacts.model.add(
+        artifacts.model.Add(
             sum(variable for connection in artifacts.connections for variable in connection.arcs)
             <= route_length_upper_bound
         )
@@ -1125,7 +1125,7 @@ def solve_topoflow(
     solver.parameters.num_search_workers = workers
     solver.parameters.log_search_progress = debug
     _configure_search_mode(solver, search_mode)
-    status = solver.solve(artifacts.model)
+    status = solver.Solve(artifacts.model)
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         label = {
             cp_model.INFEASIBLE: "NO (infeasible)",
@@ -1139,7 +1139,7 @@ def solve_topoflow(
 
     solution = solver_module.build_solution(adapted.problem, artifacts, solver)
     external_port_indexes = {
-        edge_id: solver.value(choice)
+        edge_id: solver.Value(choice)
         for edge_id, choice in terminal_choices.items()
     }
     enrich_solution(
@@ -1148,7 +1148,7 @@ def solve_topoflow(
         external_port_indexes if terminal_choices else None,
     )
     label = "OPTIMAL" if status == cp_model.OPTIMAL else "FEASIBLE"
-    return solution, label, int(solver.objective_value)
+    return solution, label, int(solver.ObjectiveValue())
 
 
 def _expanded_grid_sizes(adapted: AdaptedTopoFlowProblem) -> list[tuple[int, int]]:

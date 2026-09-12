@@ -187,7 +187,7 @@ def _convert_for_topoflow(nodes: list[dict], edges: list[dict]) -> dict:
 
 def _try_solve(adapter, topo_graph: dict, rows: int, cols: int,
                require_cell: bool, time_limit: float,
-               workers: int = 16) -> tuple[dict, int]:
+               workers: int = 16, search_mode: str = "fast") -> tuple[dict, int]:
     mid = rows // 2
     adapted = adapter.adapt_topoflow(
         topo_graph,
@@ -205,7 +205,7 @@ def _try_solve(adapter, topo_graph: dict, rows: int, cols: int,
         adapted,
         time_limit=time_limit,
         workers=workers,
-        search_mode="balanced",
+        search_mode=search_mode,
     )
     return solution, route_length
 
@@ -263,6 +263,14 @@ def _find_min_grid(adapter, topo_graph: dict, require_cell: bool,
                 continue
         if not compressed:
             break
+
+    # The search above only needed feasibility; optimize the route on the
+    # minimal grid found.
+    try:
+        cur_sol, cur_rl = _try_solve(adapter, topo_graph, cur_r, cur_c, require_cell,
+                                     min(15.0, time_limit), workers, "balanced")
+    except adapter.SolveFailure:
+        pass
 
     return cur_r, cur_c, cur_sol, cur_rl
 

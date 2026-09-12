@@ -311,26 +311,26 @@ def build_model(
 
     facility_variables: list[FacilityVariables] = []
     for facility_id in range(len(problem.facilities)):
-        row = model.new_int_var(0, problem.rows - 1, f"facility_{facility_id}_row")
-        column = model.new_int_var(0, problem.columns - 1, f"facility_{facility_id}_column")
-        cell = model.new_int_var(0, cell_count - 1, f"facility_{facility_id}_cell")
-        rotation = model.new_int_var(0, 3, f"facility_{facility_id}_rotation")
-        model.add(cell == row * problem.columns + column)
+        row = model.NewIntVar(0, problem.rows - 1, f"facility_{facility_id}_row")
+        column = model.NewIntVar(0, problem.columns - 1, f"facility_{facility_id}_column")
+        cell = model.NewIntVar(0, cell_count - 1, f"facility_{facility_id}_cell")
+        rotation = model.NewIntVar(0, 3, f"facility_{facility_id}_rotation")
+        model.Add(cell == row * problem.columns + column)
 
-        at_cell = [model.new_bool_var(f"facility_{facility_id}_at_{node}") for node in range(cell_count)]
-        model.add_exactly_one(at_cell)
+        at_cell = [model.NewBoolVar(f"facility_{facility_id}_at_{node}") for node in range(cell_count)]
+        model.AddExactlyOne(at_cell)
         for node, flag in enumerate(at_cell):
-            model.add(cell == node).only_enforce_if(flag)
-            model.add(cell != node).only_enforce_if(flag.Not())
+            model.Add(cell == node).OnlyEnforceIf(flag)
+            model.Add(cell != node).OnlyEnforceIf(flag.Not())
 
-        rotation_is = [model.new_bool_var(f"facility_{facility_id}_rot_{direction}") for direction in range(4)]
-        model.add_exactly_one(rotation_is)
+        rotation_is = [model.NewBoolVar(f"facility_{facility_id}_rot_{direction}") for direction in range(4)]
+        model.AddExactlyOne(rotation_is)
         for direction, flag in enumerate(rotation_is):
-            model.add(rotation == direction).only_enforce_if(flag)
-            model.add(rotation != direction).only_enforce_if(flag.Not())
+            model.Add(rotation == direction).OnlyEnforceIf(flag)
+            model.Add(rotation != direction).OnlyEnforceIf(flag.Not())
         facility_variables.append(FacilityVariables(row, column, cell, rotation, at_cell, rotation_is))
 
-    model.add_all_different([facility.cell for facility in facility_variables])
+    model.AddAllDifferent([facility.cell for facility in facility_variables])
 
     for facility_id, (row_value, column_value) in _hinted_positions(
         layout_hint,
@@ -339,9 +339,9 @@ def build_model(
         problem.columns,
     ).items():
         variables = facility_variables[facility_id]
-        model.add_hint(variables.row, row_value)
-        model.add_hint(variables.column, column_value)
-        model.add_hint(variables.cell, row_value * problem.columns + column_value)
+        model.AddHint(variables.row, row_value)
+        model.AddHint(variables.column, column_value)
+        model.AddHint(variables.cell, row_value * problem.columns + column_value)
 
     connection_variables: list[ConnectionVariables] = []
     # A logical connection does not own a fixed physical port. Each endpoint
@@ -350,69 +350,69 @@ def build_model(
     for connection_id, connection in enumerate(problem.connections):
         source_ports = problem.facilities[connection.source].ports[-connection.kind]
         target_ports = problem.facilities[connection.target].ports[connection.kind]
-        output_choice = model.new_int_var(0, len(source_ports) - 1, f"connection_{connection_id}_output")
-        input_choice = model.new_int_var(0, len(target_ports) - 1, f"connection_{connection_id}_input")
-        output_direction = model.new_int_var(0, 3, f"connection_{connection_id}_output_direction")
-        input_direction = model.new_int_var(0, 3, f"connection_{connection_id}_input_direction")
-        model.add_allowed_assignments(
+        output_choice = model.NewIntVar(0, len(source_ports) - 1, f"connection_{connection_id}_output")
+        input_choice = model.NewIntVar(0, len(target_ports) - 1, f"connection_{connection_id}_input")
+        output_direction = model.NewIntVar(0, 3, f"connection_{connection_id}_output_direction")
+        input_direction = model.NewIntVar(0, 3, f"connection_{connection_id}_input_direction")
+        model.AddAllowedAssignments(
             [output_choice, facility_variables[connection.source].rotation, output_direction],
             [(choice, rotation, (port[0] + rotation) % 4) for choice, port in enumerate(source_ports) for rotation in range(4)],
         )
-        model.add_allowed_assignments(
+        model.AddAllowedAssignments(
             [input_choice, facility_variables[connection.target].rotation, input_direction],
             [(choice, rotation, (port[0] + rotation) % 4) for choice, port in enumerate(target_ports) for rotation in range(4)],
         )
         port_choices.setdefault((connection.source, -connection.kind), []).append(output_choice)
         port_choices.setdefault((connection.target, connection.kind), []).append(input_choice)
 
-        output_direction_is = [model.new_bool_var(f"connection_{connection_id}_out_dir_{d}") for d in range(4)]
-        input_direction_is = [model.new_bool_var(f"connection_{connection_id}_in_dir_{d}") for d in range(4)]
+        output_direction_is = [model.NewBoolVar(f"connection_{connection_id}_out_dir_{d}") for d in range(4)]
+        input_direction_is = [model.NewBoolVar(f"connection_{connection_id}_in_dir_{d}") for d in range(4)]
         for direction in range(4):
-            model.add(output_direction == direction).only_enforce_if(output_direction_is[direction])
-            model.add(output_direction != direction).only_enforce_if(output_direction_is[direction].Not())
-            model.add(input_direction == direction).only_enforce_if(input_direction_is[direction])
-            model.add(input_direction != direction).only_enforce_if(input_direction_is[direction].Not())
+            model.Add(output_direction == direction).OnlyEnforceIf(output_direction_is[direction])
+            model.Add(output_direction != direction).OnlyEnforceIf(output_direction_is[direction].Not())
+            model.Add(input_direction == direction).OnlyEnforceIf(input_direction_is[direction])
+            model.Add(input_direction != direction).OnlyEnforceIf(input_direction_is[direction].Not())
 
-        arcs = [model.new_bool_var(f"connection_{connection_id}_arc_{index}") for index in range(len(directed_arcs))]
-        order = [model.new_int_var(0, cell_count - 1, f"connection_{connection_id}_order_{node}") for node in range(cell_count)]
-        transit = [model.new_bool_var(f"connection_{connection_id}_transit_{node}") for node in range(cell_count)]
+        arcs = [model.NewBoolVar(f"connection_{connection_id}_arc_{index}") for index in range(len(directed_arcs))]
+        order = [model.NewIntVar(0, cell_count - 1, f"connection_{connection_id}_order_{node}") for node in range(cell_count)]
+        transit = [model.NewBoolVar(f"connection_{connection_id}_transit_{node}") for node in range(cell_count)]
         source_vars = facility_variables[connection.source]
         target_vars = facility_variables[connection.target]
         for node in range(cell_count):
             in_degree = sum(arcs[index] for index in incoming[node])
             out_degree = sum(arcs[index] for index in outgoing[node])
-            model.add(out_degree - in_degree == source_vars.at_cell[node] - target_vars.at_cell[node])
-            model.add(in_degree <= 1 - source_vars.at_cell[node])
-            model.add(out_degree <= 1 - target_vars.at_cell[node])
-            model.add(transit[node] <= in_degree)
-            model.add(transit[node] <= out_degree)
-            model.add(transit[node] >= in_degree + out_degree - 1)
-            model.add(order[node] == 0).only_enforce_if(source_vars.at_cell[node])
+            model.Add(out_degree - in_degree == source_vars.at_cell[node] - target_vars.at_cell[node])
+            model.Add(in_degree <= 1 - source_vars.at_cell[node])
+            model.Add(out_degree <= 1 - target_vars.at_cell[node])
+            model.Add(transit[node] <= in_degree)
+            model.Add(transit[node] <= out_degree)
+            model.Add(transit[node] >= in_degree + out_degree - 1)
+            model.Add(order[node] == 0).OnlyEnforceIf(source_vars.at_cell[node])
 
             row, column = divmod(node, problem.columns)
             for direction, (dr, dc) in enumerate(DIRECTIONS):
                 next_row, next_column = row + dr, column + dc
                 if 0 <= next_row < problem.rows and 0 <= next_column < problem.columns:
                     neighbor = next_row * problem.columns + next_column
-                    model.add(arcs[arc_index[(node, neighbor)]] == 1).only_enforce_if(
+                    model.Add(arcs[arc_index[(node, neighbor)]] == 1).OnlyEnforceIf(
                         [source_vars.at_cell[node], output_direction_is[direction]]
                     )
-                    model.add(arcs[arc_index[(neighbor, node)]] == 1).only_enforce_if(
+                    model.Add(arcs[arc_index[(neighbor, node)]] == 1).OnlyEnforceIf(
                         [target_vars.at_cell[node], input_direction_is[direction]]
                     )
                 else:
-                    model.add_bool_or([source_vars.at_cell[node].Not(), output_direction_is[direction].Not()])
-                    model.add_bool_or([target_vars.at_cell[node].Not(), input_direction_is[direction].Not()])
+                    model.AddBoolOr([source_vars.at_cell[node].Not(), output_direction_is[direction].Not()])
+                    model.AddBoolOr([target_vars.at_cell[node].Not(), input_direction_is[direction].Not()])
 
         for arc_id, (source, target) in enumerate(directed_arcs):
-            model.add(order[target] >= order[source] + 1).only_enforce_if(arcs[arc_id])
+            model.Add(order[target] >= order[source] + 1).OnlyEnforceIf(arcs[arc_id])
 
         # A route may start/end on its own facilities, but it cannot use any
         # occupied grid cell as an intermediate transit cell.  Aggregating by
         # cell is equivalent to forbidding every incident arc facility-by-
         # facility, while avoiding millions of repeated enforced constraints.
         for node in range(cell_count):
-            model.add(
+            model.Add(
                 transit[node]
                 + sum(facility.at_cell[node] for facility in facility_variables)
                 <= 1
@@ -430,23 +430,23 @@ def build_model(
                 and len(target_facility.ports[-1]) == 1
             )
             if source_is_splitter and target_is_merger:
-                model.add(sum(transit) >= 1)
+                model.Add(sum(transit) >= 1)
 
         minimum_transit_cells = problem.edge_min_transit_cells[connection_id]
         if minimum_transit_cells:
-            model.add(sum(transit) >= minimum_transit_cells)
+            model.Add(sum(transit) >= minimum_transit_cells)
 
         connection_variables.append(ConnectionVariables(arcs, transit, output_choice, input_choice))
 
     for choices in port_choices.values():
         if len(choices) > 1:
-            model.add_all_different(choices)
+            model.AddAllDifferent(choices)
 
     # A physical grid edge can carry only one route, regardless of transport
     # kind. This also prevents two straight routes at a crossing from sharing
     # the same orientation.
     for u, v in undirected_edges:
-        model.add(
+        model.Add(
             sum(
                 connection.arcs[arc_index[(u, v)]] + connection.arcs[arc_index[(v, u)]]
                 for connection in connection_variables
@@ -459,10 +459,10 @@ def build_model(
     # to use different (horizontal/vertical) orientations.
     for node in range(cell_count):
         transit_count = sum(connection.transit[node] for connection in connection_variables)
-        model.add(transit_count <= 2)
-        is_crossing = model.new_bool_var(f"cell_{node}_is_crossing")
-        model.add(transit_count == 2).only_enforce_if(is_crossing)
-        model.add(transit_count <= 1).only_enforce_if(is_crossing.Not())
+        model.Add(transit_count <= 2)
+        is_crossing = model.NewBoolVar(f"cell_{node}_is_crossing")
+        model.Add(transit_count == 2).OnlyEnforceIf(is_crossing)
+        model.Add(transit_count <= 1).OnlyEnforceIf(is_crossing.Not())
 
         node_row, node_column = divmod(node, problem.columns)
         for connection_var in connection_variables:
@@ -477,20 +477,20 @@ def build_model(
                         and source_column + target_column == 2 * node_column
                     )
                     if not is_straight:
-                        model.add(
+                        model.Add(
                             connection_var.arcs[incoming_arc] + connection_var.arcs[outgoing_arc] <= 1
-                        ).only_enforce_if(is_crossing)
+                        ).OnlyEnforceIf(is_crossing)
 
-    model.minimize(sum(variable for connection in connection_variables for variable in connection.arcs))
+    model.Minimize(sum(variable for connection in connection_variables for variable in connection.arcs))
     return ModelArtifacts(model, facility_variables, connection_variables, directed_arcs, undirected_edges)
 
 
 def build_solution(problem: Problem, artifacts: ModelArtifacts, solver: Any) -> dict[str, object]:
     machs: list[dict[str, object]] = []
     for facility_id, (facility, variables) in enumerate(zip(problem.facilities, artifacts.facilities)):
-        row = solver.value(variables.row)
-        column = solver.value(variables.column)
-        rotation = solver.value(variables.rotation)
+        row = solver.Value(variables.row)
+        column = solver.Value(variables.column)
+        rotation = solver.Value(variables.rotation)
         ports = [
             {
                 "kind": kind,
@@ -516,15 +516,15 @@ def build_solution(problem: Problem, artifacts: ModelArtifacts, solver: Any) -> 
         )
 
     def selected_port(facility_id: int, kind: int, choice_variable: Any) -> dict[str, object]:
-        candidate_index = solver.value(choice_variable)
+        candidate_index = solver.Value(choice_variable)
         original = problem.facilities[facility_id].ports[kind][candidate_index]
         variables = artifacts.facilities[facility_id]
-        rotation = solver.value(variables.rotation)
+        rotation = solver.Value(variables.rotation)
         return {
             "index": candidate_index,
             "kind": kind,
             "orig": list(original),
-            "cell": [solver.value(variables.row), solver.value(variables.column)],
+            "cell": [solver.Value(variables.row), solver.Value(variables.column)],
             "dir": (original[0] + rotation) % 4,
         }
 
@@ -535,7 +535,7 @@ def build_solution(problem: Problem, artifacts: ModelArtifacts, solver: Any) -> 
     ):
         edges = []
         for u, v in artifacts.undirected_edges:
-            if solver.value(connection_vars.arcs[arc_index[(u, v)]]) or solver.value(connection_vars.arcs[arc_index[(v, u)]]):
+            if solver.Value(connection_vars.arcs[arc_index[(u, v)]]) or solver.Value(connection_vars.arcs[arc_index[(v, u)]]):
                 edges.append([list(divmod(u, problem.columns)), list(divmod(v, problem.columns))])
         belts.append(
             {
@@ -616,7 +616,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"input error: {exc}", file=sys.stderr)
         return 2
 
-    import ilpbridge as cp_model
+    from ortools.sat.python import cp_model
 
     artifacts = build_model(problem, cp_model)
     solver = cp_model.CpSolver()
@@ -627,7 +627,7 @@ def main(argv: list[str] | None = None) -> int:
         solver.parameters.stop_after_first_solution = True
     elif args.search_mode == "balanced":
         solver.parameters.relative_gap_limit = 0.05
-    status = solver.solve(artifacts.model)
+    status = solver.Solve(artifacts.model)
 
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         label = {
@@ -643,7 +643,7 @@ def main(argv: list[str] | None = None) -> int:
     output_path.write_text(json.dumps(solution, ensure_ascii=False, indent=2), encoding="utf-8")
 
     label = "OPTIMAL" if status == cp_model.OPTIMAL else "FEASIBLE"
-    print(f"OK ({label}), route length = {int(solver.objective_value)}")
+    print(f"OK ({label}), route length = {int(solver.ObjectiveValue())}")
     machs = solution["machs"]
     assert isinstance(machs, list)
     for machine in machs:
