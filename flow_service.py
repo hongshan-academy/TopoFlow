@@ -120,7 +120,7 @@ def build_ratio_graph(p: int, q: int, max_share: float | None = None) -> dict:
     a, b, N = find_ratio_scheme(p, q, max_share)
     t1, t2, t3 = N - q, p, q - p
     if min(t1, t2, t3) < 0 or p <= 0 or q <= 0:
-        raise ValueError("需满足 0 < p < q 且 q 为整数")
+        raise ValueError("Requires 0 < p < q with integer q")
 
     nodes: list[dict] = []
     edges: list[dict] = []
@@ -173,7 +173,7 @@ def build_ratio_graph(p: int, q: int, max_share: float | None = None) -> dict:
     else:
         if max_share is not None and max_share * N <= 1:
             raise ValueError(
-                f"无法通过细分使每份占比小于 {max_share:.4g}（N={N}）")
+                f"Cannot refine splits so each share stays below {max_share:.4g} (N={N})")
         def build_full(value, ea, eb):
             if ea == 0 and eb == 0:
                 return Node(value)
@@ -257,7 +257,7 @@ def _limit_node_type(name: str) -> str:
         return "S"
     if name.startswith(("C2_", "C3_")):
         return "C"
-    raise ValueError(f"未知构造节点: {name}")
+    raise ValueError(f"Unknown constructor node: {name}")
 
 
 def build_limit_module(p: int, q: int, optimize: bool, search_range: int,

@@ -70,7 +70,7 @@ def _error(message: str, status_code: int = 400) -> JSONResponse:
 async def _on_validation_error(_request: Request, exc: RequestValidationError) -> JSONResponse:
     first = exc.errors()[0] if exc.errors() else {}
     location = ".".join(str(part) for part in first.get("loc", ()))
-    message = first.get("msg", "请求参数无效")
+    message = first.get("msg", "Invalid request parameters")
     return JSONResponse(
         {"error": f"{location}: {message}" if location else message},
         status_code=422,
@@ -168,14 +168,14 @@ def _convert_for_topoflow(nodes: list[dict], edges: list[dict]) -> dict:
         out_d, in_d = out_deg.get(nid, 0), in_deg.get(nid, 0)
         if ntype == "S":
             if out_d < 2 or out_d > 3:
-                raise ValueError(f"分流器 {nid} 出度 {out_d} 不在 2~3，无法物理求解")
+                raise ValueError(f"Splitter {nid} has out-degree {out_d}, expected 2 or 3; cannot build physical layout")
             tf_type = "S3" if out_d == 3 else "S2"
         elif ntype == "C":
             if in_d < 2 or in_d > 3:
-                raise ValueError(f"汇流器 {nid} 入度 {in_d} 不在 2~3，无法物理求解")
+                raise ValueError(f"Converger {nid} has in-degree {in_d}, expected 2 or 3; cannot build physical layout")
             tf_type = "C3" if in_d == 3 else "C2"
         else:
-            raise ValueError(f"不支持的节点类型: {ntype}")
+            raise ValueError(f"Unsupported node type: {ntype}")
         id_mapping[nid] = f"{tf_type}_{type_counters[tf_type]}"
         type_counters[tf_type] += 1
 
@@ -453,7 +453,7 @@ def api_simulate(req: SimulateRequest) -> Any:
 @app.post("/api/ratio-split")
 async def api_ratio_split(req: RatioSplitRequest):
     if not (0 < req.p < req.q):
-        return _error("需满足 0 < p < q")
+        return _error("p and q must satisfy 0 < p < q")
     try:
         graph = await asyncio.to_thread(build_ratio_graph, req.p, req.q)
         return JSONResponse(graph)
@@ -464,7 +464,7 @@ async def api_ratio_split(req: RatioSplitRequest):
 @app.post("/api/limit-module")
 async def api_limit_module(req: LimitModuleRequest):
     if not (0 < req.p < req.q):
-        return _error("需满足 0 < p < q")
+        return _error("p and q must satisfy 0 < p < q")
     try:
         graph = await asyncio.to_thread(
             build_limit_module, req.p, req.q, req.optimize, req.search_range,

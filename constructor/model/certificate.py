@@ -9,7 +9,7 @@ from enum import Enum
 from fractions import Fraction
 from time import perf_counter
 
-from .graph import Edge, Graph
+from graph import Edge, Graph
 
 logger = logging.getLogger(__name__)
 

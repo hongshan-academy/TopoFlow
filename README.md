@@ -145,9 +145,9 @@ uv run python -m benchmarks.benchmark_flow_solvers
 
 | 后端 | 总耗时 | 中位 | P95 | 边精确 |
 |---|---|---|---|---|
-| `Karzanov (polynomial) (Z3, exact)` | 8.86 s | 51.5 ms | 141 ms | 658/658 |
-| `rank-SMT (Z3, exact)` | 9.79 s | 36.2 ms | 327 ms | 658/658 |
-| `python-milp` | 30.62 s | 94.8 ms | 871 ms | 658/658 |
+| `Karzanov (polynomial) (Z3, exact)` | 7.21 s | 43.1 ms | 114 ms | 658/658 |
+| `rank-SMT (Z3, exact)` | 7.96 s | 31.2 ms | 211 ms | 658/658 |
+| `python-milp` | 20.62 s | 73.2 ms | 616 ms | 658/658 |
 
 0 处不匹配。`Karzanov` 的聚合 LP 由 Z3 精确求解（`native/src/z3_lp.rs`），固定单线程以保证结果可复现。
 

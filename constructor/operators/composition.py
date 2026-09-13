@@ -6,7 +6,7 @@ from collections import defaultdict
 from fractions import Fraction
 
 from ..model.certificate import EdgeState, FlowCertificate
-from ..model.graph import NodeKind
+from graph import NodeKind
 
 
 def boundary_flow(certificate: FlowCertificate) -> Fraction:

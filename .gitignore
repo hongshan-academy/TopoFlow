@@ -34,6 +34,9 @@ graph
 output
 outputs
 
+# Research tooling (local experiments)
+tools/
+
 # TopoFlow-CLI runtime
 TopoFlow-CLI/sessions/
 TopoFlow-CLI/.sessions/
