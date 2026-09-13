@@ -371,6 +371,7 @@ def build_solution_payload(req_edges: Sequence[EdgeLike], result: SolverResult) 
             "id": req_edge.id,
             "flow": frac,
             "isBlocked": solver_edge.is_blocked,
+            "isFull": solver_edge.is_blocked and solver_edge.is_unblocked,
         })
 
     node_flows_map: Dict[str, float] = {}

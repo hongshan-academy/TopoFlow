@@ -211,6 +211,10 @@
       .edge-group.is-blocked.is-selected .edge-line {
         filter: drop-shadow(0 0 3px rgba(220, 38, 38, 0.95));
       }
+      .edge-group.is-full .edge-line { stroke: #2563eb; }
+      .edge-group.is-full.is-selected .edge-line {
+        filter: drop-shadow(0 0 3px rgba(37, 99, 235, 0.95));
+      }
       .edge-flow {
         fill: #1f2937;
         font-size: 11px;
@@ -327,8 +331,8 @@
           <div class="solver-group">
             <label class="stat-key" for="solver-model" style="font-size:13px">求解模型</label>
             <select id="solver-model" style="width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:10px;background:white;color:var(--ink);font-size:13px">
-              <option value="rust-karzanov" data-kind="rust" selected>Karzanov (polynomial) (Z3, exact)</option>
-              <option value="rust-rank-smt" data-kind="rust">rank-SMT (Z3, exact)</option>
+              <option value="rust-karzanov" data-kind="rust">Karzanov (polynomial) (Z3, exact)</option>
+              <option value="rust-rank-smt" data-kind="rust" selected>rank-SMT (Z3, exact)</option>
               <option value="milp" data-kind="milp">MILP (Z3, exact)</option>
             </select>
             <div id="workers-row">

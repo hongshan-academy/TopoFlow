@@ -67,6 +67,11 @@ pub struct NativeFlowSolution {
     pub total_denominator: BigInt,
     #[pyo3(get)]
     pub full_rank: bool,
+    /// Per-edge state flags; empty when the backend does not classify edges.
+    #[pyo3(get)]
+    pub can_in: Vec<bool>,
+    #[pyo3(get)]
+    pub can_out: Vec<bool>,
 }
 
 impl NativeFlowSolution {
@@ -100,7 +105,16 @@ impl NativeFlowSolution {
             total_numerator: total.numer().clone(),
             total_denominator: total.denom().clone(),
             full_rank,
+            can_in: Vec::new(),
+            can_out: Vec::new(),
         }
+    }
+
+    /// Attach per-edge state flags (used by the rank-SMT backend).
+    pub fn with_states(mut self, can_in: Vec<bool>, can_out: Vec<bool>) -> Self {
+        self.can_in = can_in;
+        self.can_out = can_out;
+        self
     }
 }
 

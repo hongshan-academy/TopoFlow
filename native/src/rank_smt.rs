@@ -345,5 +345,6 @@ pub fn solve(
         total,
         1,
         full_rank,
-    ))
+    )
+    .with_states(can_in, can_out))
 }

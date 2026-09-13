@@ -269,7 +269,7 @@ def _find_min_grid(adapter, topo_graph: dict, require_cell: bool,
 
 _SOLVERS: dict[str, dict] = {
     "rust-karzanov": {
-        "label": "Karzanov (polynomial) (Z3, exact)",
+        "label": "Karzanov (polynomial) (Z3, exact)（无边状态）",
         "kind": "rust",
     },
     "rust-rank-smt": {

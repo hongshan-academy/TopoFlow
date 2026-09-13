@@ -95,7 +95,7 @@
     message: "选择模式下可选中、拖动和删除节点。",
     backendBusy: false,
     topologyLayout: null,
-    solverModel: "rust-karzanov",
+    solverModel: "rust-rank-smt",
     // 离散仿真
     simFrames: [],
     simFrame: 0,
@@ -201,7 +201,7 @@
           numerator: ef.flow.numerator,
           denominator: ef.flow.denominator,
         };
-        edgeBlocked[ef.id] = ef.isBlocked ? "fb" : "nb";
+        edgeBlocked[ef.id] = ef.isFull ? "full" : ef.isBlocked ? "fb" : "nb";
       }
       const nodeFlows = {};
       for (const nf of sol.nodeFlows || []) {
@@ -268,6 +268,7 @@
   // 把 Rust 逐边流量包装成单个“状态对象”，复用现有 edgeFlows 渲染
   function wrapNativeResult(res) {
     const edgeFlows = {};
+    const edgeBlocked = {};
     state.graph.edges.forEach((edge, i) => {
       const ef = res.edgeFlows && res.edgeFlows[i];
       if (!ef) return;
@@ -276,8 +277,12 @@
         numerator: ef.numerator ?? ef.flow,
         denominator: ef.denominator ?? 1,
       };
+      if (ef.state) {
+        edgeBlocked[edge.id] =
+          ef.state === "full" ? "full" : ef.state === "blocked" ? "fb" : "nb";
+      }
     });
-    return [{ states: [{ edgeBlocked: {}, edgeFlows, nodeFlows: {} }] }];
+    return [{ states: [{ edgeBlocked, edgeFlows, nodeFlows: {} }] }];
   }
 
   async function triggerNativeSolve() {
@@ -1230,8 +1235,10 @@
       const activeClass = (simSnap?.edges?.[edge.id]?.queue || []).length > 0 ? " is-active" : "";
       const selectedClass =
         state.selected?.kind === "edge" && state.selected.id === edge.id ? " is-selected" : "";
-      const stateClass = currSol?.edgeBlocked?.[edge.id] === "fb" ? " is-blocked"
-        : currSol?.edgeBlocked?.[edge.id] === "sb" ? " is-semi" : "";
+      const blockedValue = currSol?.edgeBlocked?.[edge.id];
+      const stateClass = blockedValue === "fb" ? " is-blocked"
+        : blockedValue === "sb" ? " is-semi"
+        : blockedValue === "full" ? " is-full" : "";
       const continuousFlow = currSol?.edgeFlows?.[edge.id] || null;
       const continuousLabel = continuousFlow
         ? computeEdgeLabelPosition(edge, 0)

@@ -54,6 +54,31 @@ def solve_native(
     denominators = [int(value) for value in res.flow_denominators]
     total_numerator = int(res.total_numerator)
     total_denominator = int(res.total_denominator)
+    can_in = list(getattr(res, "can_in", None) or [])
+    can_out = list(getattr(res, "can_out", None) or [])
+    has_states = len(can_in) == len(edges) == len(can_out)
+
+    edge_flows: List[dict] = []
+    for index, (edge, value, numerator, denominator) in enumerate(
+        zip(edges, res.flows, numerators, denominators)
+    ):
+        entry = {
+            "from": edge["from"],
+            "to": edge["to"],
+            "flow": float(value),
+            "numerator": numerator,
+            "denominator": denominator,
+            "text": f"{numerator}/{denominator}",
+        }
+        if has_states:
+            # normal: receives only; blocked: delivers only; full: both or saturated.
+            full = (can_in[index] and can_out[index]) or numerator == denominator
+            state = "full" if full else "blocked" if can_out[index] else "normal"
+            entry["state"] = state
+            entry["isBlocked"] = state == "blocked"
+            entry["isFull"] = full
+        edge_flows.append(entry)
+
     return {
         "model": engine,
         "backend": res.backend,
@@ -64,19 +89,7 @@ def solve_native(
         "totalDenominator": total_denominator,
         "totalText": f"{total_numerator}/{total_denominator}",
         "iterations": res.iterations,
-        "edgeFlows": [
-            {
-                "from": edge["from"],
-                "to": edge["to"],
-                "flow": float(value),
-                "numerator": numerator,
-                "denominator": denominator,
-                "text": f"{numerator}/{denominator}",
-            }
-            for edge, value, numerator, denominator in zip(
-                edges, res.flows, numerators, denominators
-            )
-        ],
+        "edgeFlows": edge_flows,
     }
 
 
@@ -221,6 +234,7 @@ class FlowModel:
         self.model = model
         self.v = v
         self.is_blocked = is_blocked
+        self.is_unblocked = is_unblocked
         self._solver = Solver()
         self._solver.parameters.max_time_in_seconds = 30.0
         self._solver.parameters.num_search_workers = workers
@@ -252,6 +266,7 @@ class FlowModel:
                     edge[1],
                     float(self._solver.value(self.v[edge])),
                     self._solver.int_value(self.is_blocked[edge]) > 0,
+                    self._solver.int_value(self.is_unblocked[edge]) > 0,
                 )
                 for edge in self.edges
             ],
