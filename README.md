@@ -6,7 +6,7 @@
 ## 功能
 
 - **图形编辑**：放置/连接 In、Out、S、C 节点，支持 WG 文本导入导出、JSON 存档、WASD 平移画布。
-- **流量求解**（全部基于唯一内嵌的 Z3 引擎，输出精确有理数）：
+- **流量求解**（全部基于唯一内嵌的 Z3 引擎，输出精确有理数，支持多个单端口 In/Out 节点）：
   - `Karzanov (polynomial) (Z3, exact)`：Rust 原生 Karzanov 稳定分配求解器，聚合 LP 由 Z3 精确求解（`native/src/karzanov.rs`）。
   - `rank-SMT (Z3, exact)`：基于 rank 的方法，SMT 辅助边状态搜索（`native/src/rank_smt.rs`）。
   - `MILP (Z3, exact)`：MILP 多解求解（`solver.py`，经 `ilpbridge.py` 调用 Z3）。
@@ -124,6 +124,10 @@ uv run uvicorn server:app --port 8081 --host 127.0.0.1
 | POST | `/api/ratio-split` | 标准分流模块生成 |
 | POST | `/api/limit-module` | 标准限流计算（任意 `p/q`，`constructor/`） |
 | POST | `/api/topoflow-layout` | 物理布局（NDJSON 流式进度） |
+
+`rank-smt` 与 `karzanov` 按节点度数识别边界：每个 In 为 `(0, 1)`，每个 Out 为 `(1, 0)`。
+同一请求可包含多个弱连通的输入输出分量；每个含边分量均需至少一个 In 和一个 Out。
+结果以逐边精确流量为准；`totalFlow` 及其有理数字段为所有 In 出边流量的总和，并等于所有 Out 入边流量的总和。
 
 
 ## 测试

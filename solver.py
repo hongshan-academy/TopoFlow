@@ -35,17 +35,43 @@ def solve_native(
 
     if engine not in _ENGINE_KEYS:
         raise ValueError(f"Unknown solver engine: {engine}")
-    in_count = sum(1 for n in nodes if n["type"] == "In")
-    out_count = sum(1 for n in nodes if n["type"] == "Out")
-    if in_count != 1:
-        raise ValueError(f"Solver supports exactly one input node, found {in_count}")
-    if out_count != 1:
-        raise ValueError(f"Solver supports exactly one output node, found {out_count}")
-    renamed = {
-        n["id"]: ("In" if n["type"] == "In" else "Out" if n["type"] == "Out" else n["id"])
-        for n in nodes
-    }
-    edge_pairs = [(renamed[e["from"]], renamed[e["to"]]) for e in edges]
+    node_types: dict[str, str] = {}
+    for node in nodes:
+        node_id = node["id"]
+        if node_id in node_types:
+            raise ValueError(f"Duplicate node ID: {node_id}")
+        node_types[node_id] = node["type"]
+
+    source_ids = {node_id for node_id, node_type in node_types.items() if node_type == "In"}
+    sink_ids = {node_id for node_id, node_type in node_types.items() if node_type == "Out"}
+    if not source_ids:
+        raise ValueError("Solver requires at least one input node")
+    if not sink_ids:
+        raise ValueError("Solver requires at least one output node")
+
+    degrees = {node_id: [0, 0] for node_id in node_types}
+    edge_pairs = []
+    for edge in edges:
+        source, target = edge["from"], edge["to"]
+        if source not in degrees or target not in degrees:
+            raise ValueError(f"Edge {edge.get('id', '<unknown>')} references an unknown node")
+        degrees[source][1] += 1
+        degrees[target][0] += 1
+        edge_pairs.append((source, target))
+
+    for node_id in source_ids:
+        if degrees[node_id] != [0, 1]:
+            raise ValueError(f"Input node {node_id} must have degree (0, 1), got {tuple(degrees[node_id])}")
+    for node_id in sink_ids:
+        if degrees[node_id] != [1, 0]:
+            raise ValueError(f"Output node {node_id} must have degree (1, 0), got {tuple(degrees[node_id])}")
+
+    inferred_sources = {node_id for node_id, degree in degrees.items() if degree == [0, 1]}
+    inferred_sinks = {node_id for node_id, degree in degrees.items() if degree == [1, 0]}
+    if inferred_sources != source_ids:
+        raise ValueError("Every node with degree (0, 1) must be declared In, and no In node may have another degree")
+    if inferred_sinks != sink_ids:
+        raise ValueError("Every node with degree (1, 0) must be declared Out, and no Out node may have another degree")
     if engine == "rank-smt":
         res = topoflow_native.solve_rank_smt(edge_pairs, None, workers)
     else:
