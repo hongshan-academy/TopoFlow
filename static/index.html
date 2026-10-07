@@ -270,6 +270,33 @@
         line-height: 1.5;
       }
       .status-box { display: none; }
+      .object-status {
+        display: grid;
+        gap: 10px;
+        margin-bottom: 16px;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #fffdf8;
+      }
+      .object-status h2 { margin: 0; }
+      .object-status-section { display: grid; gap: 5px; }
+      .object-status-section h3 {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .object-status-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        font-size: 13px;
+        line-height: 1.4;
+      }
+      .object-status-row span:first-child { color: var(--muted); }
+      .object-status-row span:last-child { text-align: right; overflow-wrap: anywhere; }
+      .object-status-empty { color: var(--muted); font-size: 13px; line-height: 1.5; }
 
       .app-toast {
         position: fixed;
@@ -450,6 +477,10 @@
       </main>
 
       <aside class="panel inspector">
+        <section class="object-status" aria-live="polite" aria-label="选中对象状态">
+          <h2>状态栏</h2>
+          <div id="object-status-content" class="object-status-empty">选择一个节点或边以查看状态。</div>
+        </section>
         <hr style="margin:0 0 14px;border:none;border-top:1px solid var(--line)" />
         <h2>物理布局 (TopoFlow)</h2>
         <div class="buttons">

@@ -8,6 +8,7 @@
 
   const API_BASE = "";
   const GRAPH_BOUNDS = { width: 2700, height: 1680, padding: 36 };
+  const SIM_EDGE_CAPACITY = 4;
 
   // WASD/方向键平移：按键集合 + rAF 循环实现连续平滑移动
   const PAN_KEYS = {
@@ -109,6 +110,7 @@
 
   const els = {
     svg: document.getElementById("graph"),
+    objectStatusContent: document.getElementById("object-status-content"),
     conjugate: document.getElementById("conjugate-btn"),
     clear: document.getElementById("clear-btn"),
     save: document.getElementById("save-btn"),
@@ -1184,7 +1186,118 @@
 
   function render() {
     renderControls();
+    renderObjectStatus();
     renderGraph();
+  }
+
+  function renderObjectStatus() {
+    const content = els.objectStatusContent;
+    if (!content) return;
+    ensureSelectedObject();
+    const selected = state.selected;
+    if (!selected) {
+      content.className = "object-status-empty";
+      content.textContent = "图中没有可选的节点或边。";
+      return;
+    }
+
+    const rows = (items) => items.map(([label, value]) => `
+      <div class="object-status-row"><span>${escapeHtml(label)}</span><span>${escapeHtml(value)}</span></div>
+    `).join("");
+    const section = (title, items) => items.length ? `
+      <section class="object-status-section">
+        <h3>${escapeHtml(title)}</h3>
+        ${rows(items)}
+      </section>
+    ` : "";
+    const solution = getCurrentSolution();
+    const snapshot = getSimSnapshot();
+    const noSolution = !state.solveAttempted
+      ? "尚未求解"
+      : state.flowGroups.length > 0 ? "当前结果未提供该字段" : "当前无可用解";
+    let objectRows;
+    let solverRows;
+    let simulationRows;
+    let cycleRatio;
+
+    if (selected.kind === "node") {
+      const node = state.graph.nodes.find((item) => item.id === selected.id);
+      if (!node) {
+        content.className = "object-status-empty";
+        content.textContent = "所选节点已不存在。";
+        return;
+      }
+      const incoming = state.graph.edges.filter((edge) => edge.to === node.id).length;
+      const outgoing = state.graph.edges.filter((edge) => edge.from === node.id).length;
+      const nodeFlow = solution?.nodeFlows?.[node.id];
+      const nodeSnapshot = snapshot?.nodes?.[node.id];
+      cycleRatio = state.simCycle?.nodeRatios?.[node.id];
+      objectRows = [
+        ["节点", `${node.id}（${TYPE_LABELS[node.type] || node.type}）`],
+        ["入边 / 出边", `${incoming} / ${outgoing}`],
+      ];
+      solverRows = nodeFlow
+        ? [["流量", nodeFlow.text]]
+        : solution ? [] : [["状态", noSolution]];
+      simulationRows = [
+        ["周期流量", cycleRatio?.textReduced ?? cycleRatio?.text ?? (state.simCycle ? "未提供" : "尚未仿真")],
+        ["当前帧", snapshot
+          ? (nodeSnapshot?.hasItem === true ? "持有物品" : nodeSnapshot?.hasItem === false ? "空闲" : "未提供")
+          : "尚未仿真"],
+      ];
+    } else {
+      const edge = state.graph.edges.find((item) => item.id === selected.id);
+      if (!edge) {
+        content.className = "object-status-empty";
+        content.textContent = "所选边已不存在。";
+        return;
+      }
+      const edgeFlow = solution?.edgeFlows?.[edge.id];
+      const blocked = solution?.edgeBlocked?.[edge.id];
+      const solverState = {
+        nb: "正常",
+        fb: "阻塞",
+        sb: "半阻塞",
+        full: "满载",
+      }[blocked];
+      const edgeSnapshot = snapshot?.edges?.[edge.id];
+      cycleRatio = state.simCycle?.edgeRatios?.[edge.id];
+      objectRows = [
+        ["边", edge.id],
+        ["端点", `${edge.from} → ${edge.to}`],
+      ];
+      solverRows = [
+        ["流量", edgeFlow?.text ?? noSolution],
+        ["状态", solverState ?? (state.solveAttempted
+          ? state.flowGroups.length > 0 ? "当前结果未提供该字段" : "当前无可用解"
+          : "尚未求解")],
+      ];
+      simulationRows = [
+        ["周期流量", cycleRatio?.textReduced ?? cycleRatio?.text ?? (state.simCycle ? "未提供" : "尚未仿真")],
+        ["当前帧队列", snapshot
+          ? Array.isArray(edgeSnapshot?.queue)
+            ? `${edgeSnapshot.queue.length} / ${SIM_EDGE_CAPACITY}`
+            : "未提供"
+          : "尚未仿真"],
+      ];
+    }
+
+    const frame = snapshot
+      ? (Number.isInteger(snapshot.frame) ? snapshot.frame + 1 : state.simFrame + 1)
+      : null;
+    if (frame !== null) {
+      simulationRows.unshift(["回放帧", `${frame} / ${state.simFrames.length}`]);
+    }
+    if (state.simCycle?.period != null) {
+      simulationRows.push(["周期长度", `${state.simCycle.period} 帧`]);
+    }
+
+    content.className = "";
+    content.innerHTML = [
+      section("对象", objectRows),
+      section("求解", solverRows),
+      section("仿真", simulationRows),
+    ].join("");
   }
 
   function renderControls() {
