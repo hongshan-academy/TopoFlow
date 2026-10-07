@@ -109,6 +109,7 @@
 
   const els = {
     svg: document.getElementById("graph"),
+    conjugate: document.getElementById("conjugate-btn"),
     clear: document.getElementById("clear-btn"),
     save: document.getElementById("save-btn"),
     load: document.getElementById("load-btn"),
@@ -769,6 +770,7 @@
   // ── 事件绑定 ──────────────────────────────────────────────────
 
   function bindEvents() {
+    els.conjugate.addEventListener("click", conjugateGraph);
     els.clear.addEventListener("click", clearGraphToEndpoints);
 
     // 求解按钮（按当前模型分发：rust → 原生求解；其余 → MILP）
@@ -1526,6 +1528,46 @@
     state.viewport = { ...DEFAULT_VIEWPORT };
     state.draftEdgeFrom = null;
     rebuildSimulator("已清空为仅起点和终点。");
+  }
+
+  // 共轭变换：In↔Out、S↔C，节点 id 仅替换前缀，边反向。
+  function conjugateGraph() {
+    const PREFIX_MAP = { In: "Out", Out: "In", S: "C", C: "S" };
+    const rename = new Map();
+    const used = new Set();
+    for (const n of state.graph.nodes) {
+      const m = n.id.match(/^([a-zA-Z]+)(.*)$/);
+      const newPrefix = PREFIX_MAP[n.type] ?? (m ? m[1] : n.id);
+      const rest = m ? m[2] : "";
+      let name = newPrefix + rest;
+      if (used.has(name)) {
+        let i = 1;
+        while (used.has(`${newPrefix}${i}`)) i++;
+        name = `${newPrefix}${i}`;
+      }
+      used.add(name);
+      rename.set(n.id, name);
+    }
+    const ng = {
+      nodes: state.graph.nodes.map((n) => ({
+        ...n,
+        id: rename.get(n.id),
+        type: PREFIX_MAP[n.type] ?? n.type,
+      })),
+      edges: state.graph.edges.map((e) => ({
+        id: e.id,
+        from: rename.get(e.to),
+        to: rename.get(e.from),
+      })),
+    };
+    state.graph = graphFromImported(ng);
+    state.counters = buildCounters(state.graph);
+    state.selected =
+      state.selected?.kind === "node" && rename.has(state.selected.id)
+        ? { kind: "node", id: rename.get(state.selected.id) }
+        : state.selected;
+    state.draftEdgeFrom = null;
+    rebuildSimulator("已共轭：In/Out、S/C 互换，边已反向。");
   }
 
   function loadSavesFromStorage() {
