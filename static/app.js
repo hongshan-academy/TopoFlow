@@ -1231,7 +1231,15 @@
       const outgoing = state.graph.edges.filter((edge) => edge.from === node.id).length;
       const nodeFlow = solution?.nodeFlows?.[node.id];
       const nodeSnapshot = snapshot?.nodes?.[node.id];
-      cycleRatio = state.simCycle?.nodeRatios?.[node.id];
+      if (node.type === "In" || node.type === "Out") {
+        // In/Out 自身不持有物品，周期流量取其唯一下游/上游边的流量
+        const linked = node.type === "In"
+          ? state.graph.edges.find((item) => item.from === node.id)
+          : state.graph.edges.find((item) => item.to === node.id);
+        cycleRatio = linked ? state.simCycle?.edgeRatios?.[linked.id] : undefined;
+      } else {
+        cycleRatio = state.simCycle?.nodeRatios?.[node.id];
+      }
       objectRows = [
         ["节点", `${node.id}（${TYPE_LABELS[node.type] || node.type}）`],
         ["入边 / 出边", `${incoming} / ${outgoing}`],
@@ -1355,12 +1363,11 @@
         : blockedValue === "sb" ? " is-semi"
         : blockedValue === "full" ? " is-full" : "";
       const continuousFlow = currSol?.edgeFlows?.[edge.id] || null;
-      const continuousLabel = continuousFlow
-        ? computeEdgeLabelPosition(edge, 0)
-        : null;
+      const labelSpots = computeEdgeLabelSpots(edge);
+      const continuousLabel = continuousFlow ? labelSpots.primary : null;
       const simQueue = simSnap ? (simSnap.edges?.[edge.id]?.queue || []).length : 0;
       const simLabel = simSnap
-        ? computeEdgeLabelPosition(edge, continuousFlow ? 1 : 0)
+        ? (continuousFlow ? labelSpots.secondary : labelSpots.primary)
         : null;
       return `
         <g class="edge-group${activeClass}${selectedClass}${stateClass}" data-edge-id="${edge.id}">
@@ -1368,12 +1375,12 @@
           <path class="edge-line" d="${pathInfo.d}"></path>
           ${
             continuousFlow && continuousLabel
-              ? `<text class="edge-flow edge-flow-continuous" x="${continuousLabel.x}" y="${continuousLabel.y}" text-anchor="middle">${escapeHtml(continuousFlow.text)}</text>`
+              ? `<text class="edge-flow edge-flow-continuous" x="${continuousLabel.x}" y="${continuousLabel.y}" text-anchor="${continuousLabel.anchor}">${escapeHtml(continuousFlow.text)}</text>`
               : ""
           }
           ${
             simSnap && simLabel
-              ? `<text class="edge-flow edge-flow-sim" x="${simLabel.x}" y="${simLabel.y}" text-anchor="middle">${simQueue}</text>`
+              ? `<text class="edge-flow edge-flow-sim" x="${simLabel.x}" y="${simLabel.y}" text-anchor="${simLabel.anchor}">${simQueue}</text>`
               : ""
           }
         </g>
@@ -1491,23 +1498,30 @@
     const cx = (sx + tx) / 2 + px * offset;
     const cy = (sy + ty) / 2 + py * offset;
 
-    const labelX = (sx + 2 * cx + tx) / 4 + px * 8;
-    const labelY = (sy + 2 * cy + ty) / 4 + py * 8;
-
     return {
       d: "M " + sx + " " + sy + " Q " + cx + " " + cy + " " + tx + " " + ty,
-      labelX: labelX,
-      labelY: labelY,
+      midX: (sx + 2 * cx + tx) / 4,
+      midY: (sy + 2 * cy + ty) / 4,
+      dx: dx,
+      dy: dy,
     };
   }
 
-  function computeEdgeLabelPosition(edge, lane, verticalOffset) {
-    lane = lane || 0;
-    verticalOffset = verticalOffset || 0;
+  function computeEdgeLabelSpots(edge) {
     const pathInfo = computeEdgePath(edge);
+    const GAP = 4; // 文本与线的净距
+    if (Math.abs(pathInfo.dy) > Math.abs(pathInfo.dx)) {
+      // 陡边（>45°）：一左一右，文本垂直居中于中点
+      const y = pathInfo.midY + 4;
+      return {
+        primary: { x: pathInfo.midX - GAP, y, anchor: "end" },
+        secondary: { x: pathInfo.midX + GAP, y, anchor: "start" },
+      };
+    }
+    // 缓边：一上一下
     return {
-      x: pathInfo.labelX + lane * 13,
-      y: pathInfo.labelY - 8 + verticalOffset,
+      primary: { x: pathInfo.midX, y: pathInfo.midY - GAP, anchor: "middle" },
+      secondary: { x: pathInfo.midX, y: pathInfo.midY + 11 + GAP, anchor: "middle" },
     };
   }
 
