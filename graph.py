@@ -31,6 +31,10 @@ class NodeKind(Enum):
     S3 = ("S3_", 1, 3)
     C2 = ("C2_", 2, 1)
     C3 = ("C3_", 3, 1)
+    CU1 = ("CU1_", 1, 1)
+    CU2 = ("CU2_", 1, 1)
+    CU3 = ("CU3_", 1, 1)
+    CU4 = ("CU4_", 1, 1)
 
     def __init__(self, prefix: str, in_degree: int, out_degree: int) -> None:
         self.prefix = prefix
@@ -47,10 +51,21 @@ class NodeKind(Enum):
             return cls.IN
         if node == "Out":
             return cls.OUT
-        match = re.fullmatch(r"(S2|S3|C2|C3)_(\d+)", node)
+        match = re.fullmatch(r"(S2|S3|C2|C3|CU1|CU2|CU3|CU4)_(\d+)", node)
         if match is None:
             raise ValueError(f"unknown node name: {node!r}")
         return cls[match.group(1)]
+
+
+CONTROL_PATTERN = re.compile(r"CU(?P<gear>[1-4])_(?P<index>\d+)")
+
+
+def control_gear(node: Node) -> int | None:
+    """Return the gear of a ``CU{g}_{index}`` node, or ``None`` if it is not one."""
+    match = CONTROL_PATTERN.fullmatch(node)
+    if match is None:
+        return None
+    return int(match.group("gear"))
 
 
 STRICT_PATTERNS = DEFAULT_CONFIG.strict_patterns

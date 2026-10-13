@@ -23,7 +23,7 @@ class IntervalPlanLike(Protocol):
     def strategy(self) -> str: ...
 
 
-RecipeKind = Literal["full", "unit", "interval", "add", "scale", "sub"]
+RecipeKind = Literal["full", "unit", "interval", "control", "add", "scale", "sub"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +71,13 @@ class ReductionRecipe:
                 and self.interval is not None
                 and self.target == self.interval.target
             )
+        elif self.kind == "control":
+            valid = (
+                not self.children
+                and self.interval is None
+                and self.target.denominator == 5
+                and 1 <= self.target.numerator <= 4
+            )
         elif self.kind == "add":
             valid = (
                 self._valid_binary_denominators()
@@ -116,6 +123,8 @@ class ReductionRecipe:
     ) -> TopologyCost | None:
         if kind in ("full", "unit"):
             return None
+        if kind == "control":
+            return TopologyCost(3, 2, 1)
         if kind == "interval":
             assert interval is not None
             return TopologyCost(interval.node_count, interval.edge_count, 1)
@@ -160,6 +169,14 @@ class ReductionRecipe:
             interval=plan,
             label=plan.strategy,
         )
+
+    @classmethod
+    def for_control(cls, gear: int) -> ReductionRecipe:
+        if gear not in (1, 2, 3, 4):
+            raise ValueError("control-unit gear must be one of 1, 2, 3, 4")
+        cost = cls._derived_cost("control", ())
+        assert cost is not None
+        return cls("control", Fraction(gear, 5), cost, label=f"CU{gear}")
 
     @classmethod
     def for_add(
@@ -216,6 +233,8 @@ class ReductionRecipe:
             return "1"
         if self.kind == "unit":
             return f"U({self.target.denominator})"
+        if self.kind == "control":
+            return f"CU({self.target.numerator})"
         if self.kind == "interval":
             assert self.interval is not None
             return (

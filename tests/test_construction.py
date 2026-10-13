@@ -28,10 +28,10 @@ class UniversalConstructionTests(unittest.TestCase):
                 self.assert_constructs(p, q, reduction_depth=1)
 
     def test_unit_fraction_is_a_hard_terminal(self) -> None:
-        result = self.assert_constructs(1, 25)
+        result = self.assert_constructs(1, 7)
         self.assertEqual(result.reduction.root.kind, "unit")
-        self.assertEqual(str(result.reduction.root), "U(25)")
-        self.assertEqual(result.reduction.steps(), ("U(25)",))
+        self.assertEqual(str(result.reduction.root), "U(7)")
+        self.assertEqual(result.reduction.steps(), ("U(7)",))
 
     def test_full_sub_of_unit_is_a_fast_terminal(self) -> None:
         result = self.assert_constructs(324, 325)
@@ -44,9 +44,14 @@ class UniversalConstructionTests(unittest.TestCase):
         self.assertNotIn("109", " ".join(result.reduction.steps()))
 
     def test_restricted_sub_improves_known_target(self) -> None:
-        result = self.assert_constructs(7, 30)
-        self.assertEqual(result.reduction.cost.score, (12, 18))
+        # 9/35 = 2/5 - 1/7, where the control module supplies 2/5 directly.
+        result = self.assert_constructs(9, 35)
+        self.assertEqual(result.reduction.cost.score, (9, 13))
         self.assertEqual(result.reduction.root.kind, "sub")
+        self.assertEqual(
+            result.reduction.steps(),
+            ("CU(2)", "U(7)", "(CU(2)) - (U(7))"),
+        )
 
     def test_rank_solver_runs_only_for_the_final_graph(self) -> None:
         original = certificate_module._matrix_rank
@@ -59,11 +64,11 @@ class UniversalConstructionTests(unittest.TestCase):
     def test_known_smart_reduction_improvements(self) -> None:
         expected = {
             (28, 39): (12, 19),
-            (26, 35): (14, 22),
+            (26, 35): (9, 13),
             (16, 21): (10, 16),
             (11, 39): (14, 23),
-            (31, 40): (13, 20),
-            (29, 35): (12, 19),
+            (31, 40): (10, 14),
+            (29, 35): (9, 13),
         }
         for (p, q), cost in expected.items():
             with self.subTest(target=f"{p}/{q}"):

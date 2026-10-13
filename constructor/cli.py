@@ -52,6 +52,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=4096,
         help="maximum memoized smart-reduction states (default: 4096)",
     )
+    parser.add_argument(
+        "--no-control",
+        dest="control_units",
+        action="store_false",
+        help="disable the single-node CU(g) control-unit modules (default: enabled)",
+    )
     parser.add_argument("--output", type=Path, help="write one graph edge per line")
     parser.add_argument(
         "--cross-check",
@@ -93,6 +99,7 @@ def main() -> None:
             exhaustion_pair_limit=args.exhaustion_pair_limit,
             reduction_depth=args.reduction_depth,
             reduction_state_limit=args.reduction_state_limit,
+            control_units=args.control_units,
         )
     except (ValueError, RuntimeError) as exc:
         parser.error(str(exc))

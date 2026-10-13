@@ -72,6 +72,20 @@ def third_certificate() -> FlowCertificate:
     return certify_permutation((0,), (0,))
 
 
+def control_certificate(gear: int) -> FlowCertificate:
+    """Return the ``CU(gear)`` module whose boundary flow is ``gear / 5``."""
+    if gear not in (1, 2, 3, 4):
+        raise ValueError("control-unit gear must be one of 1, 2, 3, 4")
+    node = f"CU{gear}_0"
+    value = Fraction(gear, 5)
+    return FlowCertificate(
+        (("In", node), (node, "Out")),
+        (value, value),
+        (EdgeState.FULL, EdgeState.EMPTY),
+        frozenset({0}),
+    )
+
+
 @cache
 def plan_unit(
     denominator: int,

@@ -3,8 +3,88 @@
 from __future__ import annotations
 
 import unittest
+from fractions import Fraction
 
-from solver import solve_native
+from constructor import boundary_flow, construct_fraction
+from graph import Graph
+from solver import solve, solve_native
+
+
+def _node_type(name: str) -> str:
+    if name == "In":
+        return "In"
+    if name == "Out":
+        return "Out"
+    if name.startswith("CU"):
+        return "U"
+    if name.startswith(("S2_", "S3_")):
+        return "S"
+    return "C"
+
+
+def _certificate_graph(p: int, q: int):
+    certificate = construct_fraction(p, q).certificate
+    seen: list[str] = []
+    for source, target in certificate.edges:
+        for name in (source, target):
+            if name not in seen:
+                seen.append(name)
+    nodes = [{"id": name, "type": _node_type(name)} for name in seen]
+    edges = [
+        {"id": f"e{index}", "from": source, "to": target}
+        for index, (source, target) in enumerate(certificate.edges)
+    ]
+    return certificate, nodes, edges
+
+
+class ControlUnitSolverTests(unittest.TestCase):
+    def test_control_unit_modules_match_between_engines(self) -> None:
+        for gear in range(1, 5):
+            nodes = [
+                {"id": "In", "type": "In"},
+                {"id": f"CU{gear}_0", "type": "U"},
+                {"id": "Out", "type": "Out"},
+            ]
+            edges = [
+                {"id": "e1", "from": "In", "to": f"CU{gear}_0"},
+                {"id": "e2", "from": f"CU{gear}_0", "to": "Out"},
+            ]
+            with self.subTest(gear=gear):
+                expected = f"{gear}/5"
+                for engine in ("rank-smt", "karzanov"):
+                    result = solve_native(engine, nodes, edges, workers=1)
+                    self.assertEqual(result["totalText"], expected)
+                    self.assertEqual(
+                        [edge["text"] for edge in result["edgeFlows"]],
+                        [expected, expected],
+                    )
+
+    def test_constructed_control_unit_graphs_are_exact(self) -> None:
+        for p, q in ((7, 10), (9, 35), (1, 25), (31, 40)):
+            certificate, nodes, edges = _certificate_graph(p, q)
+            expected = [
+                f"{flow.numerator}/{flow.denominator}"
+                for flow in certificate.flows
+            ]
+            with self.subTest(target=f"{p}/{q}"):
+                self.assertEqual(boundary_flow(certificate), Fraction(p, q))
+                for engine in ("rank-smt", "karzanov"):
+                    result = solve_native(engine, nodes, edges, workers=1)
+                    self.assertEqual(result["totalText"], f"{p}/{q}")
+                    self.assertEqual(
+                        [edge["text"] for edge in result["edgeFlows"]], expected
+                    )
+
+    def test_milp_throttles_control_units(self) -> None:
+        for p, q in ((7, 10), (9, 35), (1, 25)):
+            certificate, _, _ = _certificate_graph(p, q)
+            graph = Graph.from_edges(certificate.edges)
+            result = solve(graph)
+            self.assertEqual(result.status, "Optimal")
+            for solver_edge, expected in zip(result.edges, certificate.flows):
+                self.assertAlmostEqual(
+                    solver_edge.flow, float(expected), places=6
+                )
 
 
 MULTI_BOUNDARY_NODES = [

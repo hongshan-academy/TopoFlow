@@ -102,6 +102,12 @@ pub fn solve(
         optimize.assert(&flow[edge_id].ge(&margin));
         optimize.assert(&flow[edge_id].ge(&zero));
         optimize.assert(&flow[edge_id].le(&one));
+        // A control unit throttles its incoming edge to ``[0, gear/5]``.
+        let cap = match graph.kinds[edge.v] {
+            Kind::ControlUnit { gear } => Real::from_real(&ctx, gear as i32, 5),
+            _ => one.clone(),
+        };
+        optimize.assert(&flow[edge_id].le(&cap));
         for variable in [&empty[edge_id], &full_state[edge_id], &partial[edge_id], &fixed[edge_id]] {
             optimize.assert(&variable.ge(&zero_int));
             optimize.assert(&variable.le(&one_int));
@@ -112,7 +118,10 @@ pub fn solve(
         );
 
         let candidate = matches!(graph.kinds[edge.u], Kind::Source | Kind::Merger)
-            && matches!(graph.kinds[edge.v], Kind::Sink | Kind::Splitter);
+            && matches!(
+                graph.kinds[edge.v],
+                Kind::Sink | Kind::Splitter | Kind::ControlUnit { .. }
+            );
         let component = graph.component_of[edge.u];
         fixed_sums[component] = fixed_sums[component].clone() + fixed[edge_id].clone();
         if explicit_fixed {
@@ -123,8 +132,9 @@ pub fn solve(
         }
         if candidate {
             let fixed_real = Real::from_int(&fixed[edge_id]);
-            optimize.assert(&flow[edge_id].ge(&fixed_real));
-            optimize.assert(&flow[edge_id].le(&(&one - &margin + &fixed_real)));
+            let scaled = &cap * &fixed_real;
+            optimize.assert(&flow[edge_id].ge(&scaled));
+            optimize.assert(&flow[edge_id].le(&(&cap - &margin + &scaled)));
         } else if explicitly_selected[edge_id] {
             optimize.assert(&flow[edge_id].ge(&Real::from_int(&fixed[edge_id])));
         }
@@ -213,6 +223,17 @@ pub fn solve(
                     }
                 }
             }
+            Kind::ControlUnit { gear } => {
+                let input = graph.incoming[node][0];
+                let output = graph.outgoing[node][0];
+                // Downstream blocked => upstream blocked (equivalently, upstream
+                // flowing => downstream flowing).
+                optimize.assert(&full_state[output].le(&full_state[input]));
+                // Upstream blocked => the incoming edge saturates at gear/5.
+                let cap = Real::from_real(&ctx, gear as i32, 5);
+                let blocked = Real::from_int(&full_state[input]);
+                optimize.assert(&flow[input].ge(&(&cap - &big_m * &(&one - &blocked))));
+            }
             _ => {}
         }
     }
@@ -284,7 +305,11 @@ pub fn solve(
         if is_fixed[edge] {
             let mut row = vec![Rat::zero(); m];
             row[edge] = Rat::one();
-            rows.push((row, Rat::one()));
+            let rhs = match graph.kinds[graph.edges[edge].v] {
+                Kind::ControlUnit { gear } => crate::rat_ratio(gear as i64, 5),
+                _ => Rat::one(),
+            };
+            rows.push((row, rhs));
         }
     }
     for node in 0..graph.names.len() {
@@ -306,6 +331,17 @@ pub fn solve(
             row[selected[0]] = Rat::one();
             row[index] = -Rat::one();
             rows.push((row, Rat::zero()));
+        }
+    }
+    for node in 0..graph.names.len() {
+        if let Kind::ControlUnit { gear } = graph.kinds[node] {
+            let input = graph.incoming[node][0];
+            // A blocked (delivering-only) incoming edge sits exactly at gear/5.
+            if can_out[input] {
+                let mut row = vec![Rat::zero(); m];
+                row[input] = Rat::one();
+                rows.push((row, crate::rat_ratio(gear as i64, 5)));
+            }
         }
     }
 

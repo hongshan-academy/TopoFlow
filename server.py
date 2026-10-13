@@ -120,6 +120,7 @@ class LimitModuleRequest(BaseModel):
     reduction_depth: int = 3
     reduction_state_limit: int = 4096
     cross_check: bool = False
+    control_units: bool = True
 
 
 class RatioSplitRequest(BaseModel):
@@ -469,6 +470,7 @@ async def api_limit_module(req: LimitModuleRequest):
         graph = await asyncio.to_thread(
             build_limit_module, req.p, req.q, req.optimize, req.search_range,
             req.reduction_depth, req.reduction_state_limit, req.cross_check,
+            req.control_units,
         )
         return JSONResponse(graph)
     except Exception as e:

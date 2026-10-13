@@ -6,6 +6,27 @@ pub enum Kind {
     Sink,
     Splitter,
     Merger,
+    ControlUnit { gear: usize },
+}
+
+/// Parse the gear of a `CU{g}_{index}` control-unit node name.
+fn control_gear(name: &str) -> Result<usize, String> {
+    let rest = name
+        .strip_prefix("CU")
+        .ok_or_else(|| format!("invalid control-unit name {name}"))?;
+    let (gear, index) = rest
+        .split_once('_')
+        .ok_or_else(|| format!("invalid control-unit name {name}"))?;
+    let gear: usize = gear
+        .parse()
+        .map_err(|_| format!("invalid control-unit gear in {name}"))?;
+    if !(1..=4).contains(&gear) {
+        return Err(format!("control-unit gear out of range 1..=4 in {name}"));
+    }
+    if index.is_empty() || !index.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(format!("invalid control-unit index in {name}"));
+    }
+    Ok(gear)
 }
 
 #[derive(Clone, Debug)]
@@ -64,16 +85,22 @@ impl GraphData {
         let mut sinks = Vec::new();
         for node in 0..names.len() {
             let degree = (incoming[node].len(), outgoing[node].len());
-            let kind = match degree {
-                (0, 1) => Kind::Source,
-                (1, 0) => Kind::Sink,
-                (1, 1..=3) => Kind::Splitter,
-                (2..=3, 1) => Kind::Merger,
-                _ => {
-                    return Err(format!(
-                        "invalid degree {:?} for node {}",
-                        degree, names[node]
-                    ));
+            let kind = if degree == (1, 1) && names[node].starts_with("CU") {
+                Kind::ControlUnit {
+                    gear: control_gear(&names[node])?,
+                }
+            } else {
+                match degree {
+                    (0, 1) => Kind::Source,
+                    (1, 0) => Kind::Sink,
+                    (1, 1..=3) => Kind::Splitter,
+                    (2..=3, 1) => Kind::Merger,
+                    _ => {
+                        return Err(format!(
+                            "invalid degree {:?} for node {}",
+                            degree, names[node]
+                        ));
+                    }
                 }
             };
             if kind == Kind::Source {

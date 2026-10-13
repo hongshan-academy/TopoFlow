@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 use num_traits::{One, Zero};
 
 use crate::graph::{GraphData, Kind};
-use crate::{NativeFlowSolution, Rat, rat};
+use crate::{NativeFlowSolution, Rat, rat, rat_ratio};
 
 #[derive(Clone)]
 struct Contract {
@@ -58,10 +58,16 @@ fn build_instance(graph: &GraphData) -> Result<Instance, String> {
 
     let mut base = Vec::new();
     for (edge_id, edge) in graph.edges.iter().enumerate() {
+        // A control unit throttles the full speed of its incoming edge: a
+        // `CU{g}_{i}` node lowers that edge's capacity from 1 to `g / 5`.
+        let capacity = match graph.kinds[edge.v] {
+            Kind::ControlUnit { gear } => rat_ratio(gear as i64, 5),
+            _ => rat(1),
+        };
         base.push(Contract {
             left: left_of[edge.u].ok_or("edge leaves sink")?,
             right: right_of[edge.v].ok_or("edge enters source")?,
-            capacity: rat(1),
+            capacity,
             left_tie: if graph.kinds[edge.u] == Kind::Source {
                 0
             } else {

@@ -42,6 +42,10 @@ pub(crate) fn rat(value: i64) -> Rat {
     BigRational::from_integer(BigInt::from(value))
 }
 
+pub(crate) fn rat_ratio(numerator: i64, denominator: i64) -> Rat {
+    BigRational::new(BigInt::from(numerator), BigInt::from(denominator))
+}
+
 #[pyclass(frozen)]
 #[derive(Clone)]
 pub struct NativeFlowSolution {

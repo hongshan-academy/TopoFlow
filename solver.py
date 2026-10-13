@@ -7,7 +7,7 @@ from result import (
     EdgeResult,
     SolverResult,
 )
-from graph import Graph
+from graph import Graph, control_gear
 
 from ilpbridge import FEASIBLE, INFEASIBLE, OPTIMAL, UNKNOWN, Model, Solver, _LinearExpr
 
@@ -144,8 +144,10 @@ class FlowModel:
             graph.in_edges,
             graph.sources,
             graph.sinks,
-            graph.splitters,
-            graph.convergers,
+            # Control units are degree-(1, 1) nodes that the graph classifies as
+            # splitters; they get their own throttling rules below.
+            [node for node in graph.splitters if control_gear(node) is None],
+            [node for node in graph.convergers if control_gear(node) is None],
         )
         self.edges = edges
         self._undefined = not sources or not sinks
@@ -256,6 +258,26 @@ class FlowModel:
                     <= sum(is_blocked[edge] for edge in incoming_edges)
                     + is_unblocked[outgoing_edge]
                 )
+
+        # Control units throttle their single incoming edge to ``[0, gear/5]``
+        # and only ever propagate blockage from downstream to upstream.
+        for node in nodes:
+            gear = control_gear(node)
+            if gear is None:
+                continue
+            in_edge = in_edges[node][0]
+            out_edge = out_edges[node][0]
+
+            # Capacity: the incoming edge's full speed is gear/5.
+            model.add(v[in_edge] * 5 <= gear)
+
+            # Downstream blocked => upstream blocked (equivalently, upstream
+            # flowing => downstream flowing).
+            model.add(is_blocked[out_edge] <= is_blocked[in_edge])
+            model.add(is_unblocked[in_edge] <= is_unblocked[out_edge])
+
+            # Upstream blocked => incoming flow saturates at gear/5.
+            model.add(v[in_edge] * 5 >= gear - 10 + 10 * is_blocked[in_edge])
 
         self.model = model
         self.v = v

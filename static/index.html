@@ -63,6 +63,23 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 10px;
       }
+      .gear-chips { display: inline-flex; gap: 6px; }
+      .gear-chip {
+        padding: 3px 8px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: white;
+        color: var(--ink);
+        font-size: 12px;
+        line-height: 1.4;
+        cursor: pointer;
+      }
+      .gear-chip.is-active {
+        background: #7a5cc4;
+        border-color: #7a5cc4;
+        color: white;
+        font-weight: 700;
+      }
       .buttons {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -351,6 +368,16 @@
             <button data-mode-button="add-C">C `2`</button>
             <button data-mode-button="add-In" class="secondary">In `3`</button>
             <button data-mode-button="add-Out" class="secondary">Out `4`</button>
+            <button data-mode-button="add-U" class="secondary">准入口 `5`</button>
+          </div>
+          <div class="solver-options" style="margin-top:8px;display:flex;align-items:center;gap:8px">
+            <span class="stat-key" style="font-size:12px;white-space:nowrap">准入口挡位</span>
+            <span class="gear-chips" id="palette-gear-chips">
+              <button type="button" class="gear-chip" data-gear="1">1/5</button>
+              <button type="button" class="gear-chip" data-gear="2">2/5</button>
+              <button type="button" class="gear-chip" data-gear="3">3/5</button>
+              <button type="button" class="gear-chip" data-gear="4">4/5</button>
+            </span>
           </div>
         </div>
 
@@ -522,6 +549,9 @@
               <input id="limit-optimize" type="checkbox" style="width:auto" /> 深搜
             </label>
             <label class="checkbox-row" style="font-size:13px">
+              <input id="limit-control" type="checkbox" style="width:auto" checked /> 准入口
+            </label>
+            <label class="checkbox-row" style="font-size:13px">
               <input id="limit-crosscheck" type="checkbox" style="width:auto" /> Rust 复核
             </label>
           </div>
@@ -531,6 +561,6 @@
       </aside>
     </div>
 
-    <script src="./app.js?v=2"></script>
+    <script src="./app.js?v=4"></script>
   </body>
 </html>

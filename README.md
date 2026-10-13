@@ -13,6 +13,7 @@
   - 三种引擎统一由 `solver.py` 提供并共享同一个求解 API（`/api/solve`）。
 - **离散仿真**：逐帧回放传送带队列与节点占用（`simulator.py`，边容量 4）。
 - **标准限流计算**：按目标比例 `p/q` 构造标准限流模块，任意 `0 < p < q` 都可构造，输出规约步骤与满秩流量解（可逐边校验，`constructor/`）。
+- **准入口（Control Unit / CU）**：`g/5`（`g=1..4`）可由单个准入口节点 `CU{g}_0` 直接给出，其入边满速为 `g/5`；规划器默认把 `CU(g)` 用作加数、减数或被缩放的内层模块，明显减小 `1/5` 族的图（如 `9/35 = CU(2) - U(7)`、`1/25 = CU(1)/5`）。可通过 `control_units=False` / `--no-control` 关闭。手动编辑时，左栏「准入口」按钮下方用 `1/5`–`4/5` 选择放置挡位，选中的准入口节点可在右栏「状态栏 → 准入口」切换挡位（节点名会同步为 `CU{g}_{i}`）。三种流量引擎（`Karzanov`、`rank-SMT`、`MILP`）与构造器/秩检查都识别准入口的 `g/5` 容量与阻塞传播。
 - **标准分流模块**：按 `p:q` 二分构造分流拓扑。
 - **物理布局**：内置布局求解器（Z3，经 `ilpbridge.py`）搜索最小可行网格并可视化（`layout/`）。
 
@@ -122,7 +123,7 @@ uv run uvicorn server:app --port 8081 --host 127.0.0.1
 | POST | `/api/solve` | 流量求解（`engine=karzanov` / `rank-smt` / `milp`，精确有理数输出） |
 | POST | `/api/simulate` | 离散事件仿真（返回逐帧状态） |
 | POST | `/api/ratio-split` | 标准分流模块生成 |
-| POST | `/api/limit-module` | 标准限流计算（任意 `p/q`，`constructor/`） |
+| POST | `/api/limit-module` | 标准限流计算（任意 `p/q`，可选 `control_units`，`constructor/`） |
 | POST | `/api/topoflow-layout` | 物理布局（NDJSON 流式进度） |
 
 `rank-smt` 与 `karzanov` 按节点度数识别边界：每个 In 为 `(0, 1)`，每个 Out 为 `(1, 0)`。

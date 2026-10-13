@@ -253,6 +253,8 @@ def _limit_node_type(name: str) -> str:
         return "In"
     if name == "Out":
         return "Out"
+    if name.startswith(("CU1_", "CU2_", "CU3_", "CU4_")):
+        return "U"
     if name.startswith(("S2_", "S3_")):
         return "S"
     if name.startswith(("C2_", "C3_")):
@@ -262,7 +264,7 @@ def _limit_node_type(name: str) -> str:
 
 def build_limit_module(p: int, q: int, optimize: bool, search_range: int,
                        reduction_depth: int, reduction_state_limit: int,
-                       cross_check: bool) -> dict:
+                       cross_check: bool, control_units: bool = True) -> dict:
     from constructor import boundary_flow, construct_fraction, crosscheck_karzanov
 
     result = construct_fraction(
@@ -271,6 +273,7 @@ def build_limit_module(p: int, q: int, optimize: bool, search_range: int,
         search_range=search_range,
         reduction_depth=reduction_depth,
         reduction_state_limit=reduction_state_limit,
+        control_units=control_units,
     )
     cert = result.certificate
 

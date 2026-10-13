@@ -10,6 +10,7 @@ from time import perf_counter
 from typing import cast
 
 from ..leaves.interval import IntervalPlan, plan_interval, realize_interval
+from ..leaves.unit import control_certificate
 from ..model.arithmetic import ceil_log3, factor_power_of_two, unit_topology_size
 from ..model.certificate import FlowCertificate
 from ..model.recipe import ReductionRecipe, TopologyCost
@@ -27,6 +28,7 @@ SIMPLE_FRACTIONS = tuple(
         for numerator in range(1, denominator)
     )
 )
+CONTROL_GEARS = {Fraction(gear, 5): gear for gear in range(1, 5)}
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +64,7 @@ class ReductionPlanner:
     search_range: int = 0
     depth: int = 3
     state_limit: int = 4096
+    control_units: bool = True
     _unit_costs: dict[int, TopologyCost] = field(default_factory=dict, init=False)
     _unavailable_units: dict[int, Exception] = field(default_factory=dict, init=False)
     _intervals: dict[Fraction, IntervalPlan] = field(default_factory=dict, init=False)
@@ -149,6 +152,8 @@ class ReductionPlanner:
         if recipe.kind == "interval":
             assert recipe.interval is not None
             return realize_interval(cast(IntervalPlan, recipe.interval))
+        if recipe.kind == "control":
+            return control_certificate(recipe.target.numerator)
         if recipe.kind == "add":
             return self.core.add(
                 self.realize(recipe.children[0]), self.realize(recipe.children[1])
@@ -166,8 +171,23 @@ class ReductionPlanner:
         key = value, depth
         if key in self._memo:
             return self._memo[key]
+        gear = CONTROL_GEARS.get(value) if self.control_units else None
+        if gear is not None:
+            result = ReductionRecipe.for_control(gear)
+            self._memo[key] = result
+            return result
         if value.numerator == 1:
             result = self._require_unit(value.denominator)
+            if self.control_units and depth and value.denominator % 5 == 0:
+                # 1/(5k) = (1/5)/k, so the CU(1) module is a cheaper inner
+                # factor whenever scaling the plain unit back down by k helps.
+                factor = value.denominator // 5
+                if factor >= 2:
+                    control_scaled = self._scale(
+                        factor, ReductionRecipe.for_control(1), "control-scale"
+                    )
+                    if control_scaled.cost.score < result.cost.score:
+                        result = control_scaled
             self._memo[key] = result
             return result
         remainder = 1 - value
@@ -283,6 +303,9 @@ class ReductionPlanner:
         return result
 
     def _interval_recipe(self, value: Fraction) -> ReductionRecipe:
+        gear = CONTROL_GEARS.get(value) if self.control_units else None
+        if gear is not None:
+            return ReductionRecipe.for_control(gear)
         if value not in self._intervals:
             self._intervals[value] = plan_interval(
                 value, optimize=self.optimize_interval, search_range=self.search_range
