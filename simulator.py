@@ -2,7 +2,7 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any, Deque, Dict, List, Optional, Set, Tuple
 
-from graph import Graph, Node, Edge, NodeType
+from graph import Graph, Node, Edge, NodeType, control_gear
 
 
 EDGE_CAPACITY = 4
@@ -15,6 +15,8 @@ class NodeRuntime:
     has_item: bool = False
     rr_in_index: int = -1
     rr_out_index: int = -1
+    cu_window_start: Optional[int] = None
+    cu_window_received: int = 0
 
 
 class TopoFlowSimulator:
@@ -202,6 +204,15 @@ class TopoFlowSimulator:
             return True
         if not self._out_slots[node]:
             return False
+        gear = control_gear(node)
+        if gear is not None:
+            rt = self.node_runtime[node]
+            if (
+                rt.cu_window_start is not None
+                and self.frame - rt.cu_window_start < 5
+                and rt.cu_window_received >= gear
+            ):
+                return False
         return not frame[0]
 
     def step_once(self) -> Tuple[Dict[Node, bool], Set[EdgeKey]]:
@@ -268,6 +279,14 @@ class TopoFlowSimulator:
                     edge_state[incoming].popleft()
                     edge_start_items[incoming] -= 1
                     node_received[node] = True
+                    if control_gear(node) is not None:
+                        if (
+                            rt.cu_window_start is None
+                            or self.frame - rt.cu_window_start >= 5
+                        ):
+                            rt.cu_window_start = self.frame
+                            rt.cu_window_received = 0
+                        rt.cu_window_received += 1
                     if node_type != NodeType.SINK:
                         current[0] = True
                     if node_type == NodeType.CONVERGER:
@@ -294,6 +313,11 @@ class TopoFlowSimulator:
         for node in self.update_order:
             rt = self.node_runtime[node]
             node_part.extend((1 if rt.has_item else 0, rt.rr_in_index, rt.rr_out_index))
+            if control_gear(node) is not None:
+                if rt.cu_window_start is None or self.frame - rt.cu_window_start >= 5:
+                    node_part.extend((-1, 0))
+                else:
+                    node_part.extend((self.frame - rt.cu_window_start, rt.cu_window_received))
         edge_part: List[int] = []
         for edge in self._all_edges:
             edge_part.extend(self.edge_queues[edge])

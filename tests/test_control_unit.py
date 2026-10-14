@@ -8,6 +8,8 @@ from constructor.leaves.unit import control_certificate
 from constructor.model.certificate import EdgeState, FlowCertificate
 from constructor.verification.karzanov import crosscheck_karzanov
 from graph import NodeKind, control_gear
+from graph import Graph
+from simulator import TopoFlowSimulator, simulate_frames
 
 
 class ControlUnitNodeTests(unittest.TestCase):
@@ -64,6 +66,48 @@ class ControlUnitNodeTests(unittest.TestCase):
         # A plain ``(1, 1)`` node whose name is not a CU is a generic pass-through
         # splitter in TopoFlow, not a control unit.
         self.assertIsNone(control_gear("U1_0"))
+
+
+class ControlUnitSimulationTests(unittest.TestCase):
+    def test_each_gear_accepts_at_most_g_items_per_five_ticks(self) -> None:
+        for gear in range(1, 5):
+            with self.subTest(gear=gear):
+                node = f"CU{gear}_0"
+                sim = TopoFlowSimulator(Graph.from_edges([("In", node), (node, "Out")]))
+                received = [sim.step_once()[0][node] for _ in range(17)]
+                self.assertEqual(
+                    [tick for tick, accepted in enumerate(received, 1) if accepted],
+                    [tick for start in (2, 7, 12, 17) for tick in range(start, min(start + gear, 18))],
+                )
+
+    def test_window_starts_with_first_item_after_idle_gap(self) -> None:
+        node = "CU2_0"
+        sim = TopoFlowSimulator(Graph.from_edges([("In", node), (node, "Out")]))
+        incoming = sim._in_slots[node][0]
+        choose_outgoing = sim._choose_outgoing_edge
+        sim._choose_outgoing_edge = (
+            lambda current_node, frame, edges:
+            None if current_node == "In" else choose_outgoing(current_node, frame, edges)
+        )
+        received = []
+        for tick in range(1, 19):
+            if tick in (1, 13, 15, 16, 18):
+                sim.edge_queues[incoming].append(1)
+            accepted = sim.step_once()[0][node]
+            received.append(accepted)
+            if tick in (16, 17):
+                self.assertFalse(sim.node_runtime[node].has_item)
+                self.assertGreater(len(sim.edge_queues[incoming]), 0)
+        self.assertEqual(
+            [tick for tick, accepted in enumerate(received, 1) if accepted],
+            [1, 13, 15, 18],
+        )
+
+    def test_cycle_detection_keeps_window_state(self) -> None:
+        node = "CU1_0"
+        result = simulate_frames(Graph.from_edges([("In", node), (node, "Out")]))
+        self.assertTrue(result["cycle"]["converged"])
+        self.assertEqual(result["cycle"]["node_ratios"][node], (1, 5))
 
 
 class ControlUnitPlannerTests(unittest.TestCase):
