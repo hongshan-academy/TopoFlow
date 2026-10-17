@@ -1,0 +1,36 @@
+{
+  "n": 3,
+  "m": 3,
+  "machs": [
+    {
+      "id": 0,
+      "type": "logi",
+      "size": [1, 1],
+      "pos": [1, 1],
+      "rot": 1,
+      "topoflow_node_id": "CU2_0",
+      "topoflow_node_type": "CU2",
+      "control_gear": 2
+    }
+  ],
+  "belts": [],
+  "topoflow": {
+    "transport": "belt",
+    "external_connections": [
+      {
+        "id": "in",
+        "role": "input",
+        "facility_id": 0,
+        "anchor": {"side": "left", "offset": 1},
+        "port_assignment": {"cell": [1, 1], "dir": 3, "kind": 1}
+      },
+      {
+        "id": "out",
+        "role": "output",
+        "facility_id": 0,
+        "anchor": {"side": "right", "offset": 1},
+        "port_assignment": {"cell": [1, 1], "dir": 1, "kind": -1}
+      }
+    ]
+  }
+}
