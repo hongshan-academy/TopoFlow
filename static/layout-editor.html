@@ -249,6 +249,7 @@
     }
     .facility.merger { color: var(--orange); }
     .facility.splitter { color: var(--blue); }
+    .facility.control { color: #9b72df; }
     .facility.preview-draggable {
       width: clamp(22px, calc(var(--cell) * .58), 32px);
       height: clamp(22px, calc(var(--cell) * .58), 32px);
@@ -445,6 +446,7 @@
           <div class="kind-item"><div class="kind-glyph splitter">S3</div><div><div class="kind-name">三路分流器</div><div class="kind-sub">一入三出</div></div><div class="kind-count" id="count-s3">0</div></div>
           <div class="kind-item"><div class="kind-glyph merger">C2</div><div><div class="kind-name">二路汇流器</div><div class="kind-sub">映射三入口设施</div></div><div class="kind-count" id="count-c2">0</div></div>
           <div class="kind-item"><div class="kind-glyph merger">C3</div><div><div class="kind-name">三路汇流器</div><div class="kind-sub">三入一出</div></div><div class="kind-count" id="count-c3">0</div></div>
+          <div class="kind-item"><div class="kind-glyph">CU</div><div><div class="kind-name">准入口</div><div class="kind-sub">一入一出 · 保留 1/5–4/5 档位</div></div><div class="kind-count" id="count-cu">0</div></div>
           <div class="kind-item"><div class="kind-glyph entry">IN</div><div><div class="kind-name">入口</div><div class="kind-sub">可拖动边界终端</div></div><div class="kind-count">1</div></div>
           <div class="kind-item"><div class="kind-glyph exit">OUT</div><div><div class="kind-name">出口</div><div class="kind-sub">可拖动边界终端</div></div><div class="kind-count">1</div></div>
         </div>
@@ -820,7 +822,12 @@
       if (!Array.isArray(edge) || edge.length !== 2 || !set.has(edge[0]) || !set.has(edge[1])) issues.push(`边 #${index + 1} 引用了未知节点`);
     }
     for (const node of nodes) {
-      if (node !== "In" && node !== "Out" && !/^(S2|S3|C2|C3)_\d+(?:__\d+)?$/.test(node)) issues.push(`不支持节点 ${node}`);
+      if (node !== "In" && node !== "Out" && !/^(S2|S3|C2|C3|CU[1-4])_\d+(?:__\d+)?$/.test(node)) issues.push(`不支持节点 ${node}`);
+      if (/^CU[1-4]_/.test(node)) {
+        const incoming = edges.filter(edge => Array.isArray(edge) && edge[1] === node).length;
+        const outgoing = edges.filter(edge => Array.isArray(edge) && edge[0] === node).length;
+        if (incoming !== 1 || outgoing !== 1) issues.push(`${node} 必须一入一出`);
+      }
     }
     if (state.terminals.In.side === state.terminals.Out.side && state.terminals.In.offset === state.terminals.Out.offset) issues.push("入口和出口不能占用同一边界格");
     if (!/^[01]+$/.test(String(state.inputPattern || "").trim())) issues.push("输入节拍必须是非空 0/1 位串，例如 1 或 1000");
@@ -985,6 +992,7 @@
     const layer = $("#node-layer");
     const outwardArrows = ["↓", "→", "↑", "←"];
     const inferredFamily = node => {
+      if (/^CU[1-4]_/.test(node)) return node.split("_")[0];
       const explicit = state.graph?.nodeTypes?.[node];
       if (explicit) return explicit;
       if (state.graph?.inferNodeTypesFromDegrees) {
@@ -997,13 +1005,16 @@
       }
       return null;
     };
-    const fallbackPorts = family => family.startsWith("S")
+    const fallbackPorts = family => family.startsWith("CU")
+      ? [{ kind: 1, dir: 2 }, { kind: -1, dir: 0 }]
+      : family.startsWith("S")
       ? [{ kind: 1, dir: 2 }, { kind: -1, dir: 0 }, { kind: -1, dir: 1 }, { kind: -1, dir: 3 }]
       : [{ kind: 1, dir: 0 }, { kind: 1, dir: 1 }, { kind: 1, dir: 3 }, { kind: -1, dir: 2 }];
     for (const [node, position] of Object.entries(positions)) {
       const machine = isSolutionView() ? (state.solution.machs || []).find(item => item.topoflow_node_id === node) : null;
       const family = machine?.topoflow_node_type || inferredFamily(node) || node.split("_")[0];
       const splitter = family.startsWith("S");
+      const control = family.startsWith("CU");
       const center = cellCenter(position.row, position.column);
       const ports = isSolutionView()
         ? (machine?.ports?.length ? machine.ports : fallbackPorts(family))
@@ -1015,10 +1026,10 @@
         return `<span class="port-arrow dir-${direction} ${output ? "output" : "input"}" data-port-dir="${direction}" data-port-role="${output ? "output" : "input"}" title="${role}端口 · ${outwardArrows[flowDirection]}">${outwardArrows[flowDirection]}</span>`;
       }).join("");
       const element = document.createElement("div");
-      element.className = `facility ${splitter ? "splitter" : "merger"}${isSolutionView() ? "" : " preview-draggable"}`;
+      element.className = `facility ${control ? "control" : splitter ? "splitter" : "merger"}${isSolutionView() ? "" : " preview-draggable"}`;
       element.dataset.nodeId = node;
       element.style.left = `${center.x}px`; element.style.top = `${center.y}px`;
-      element.title = `${node} · ${splitter ? "分流器" : "汇流器"}`;
+      element.title = `${node} · ${control ? `准入口 ${family.slice(2)}/5` : splitter ? "分流器" : "汇流器"}`;
       element.innerHTML = `<span class="code">${escapeHtml(node)}</span>${isSolutionView() ? `<span class="rotation">${position.rotation * 90}°</span>` : ""}${arrows}`;
       if (!isSolutionView()) element.addEventListener("pointerdown", startFacilityDrag);
       layer.appendChild(element);
@@ -1298,6 +1309,7 @@
     const counts = { S2: 0, S3: 0, C2: 0, C3: 0 };
     nodes.forEach(node => { const key = String(node).split("_")[0]; if (key in counts) counts[key] += 1; });
     Object.entries(counts).forEach(([key, count]) => $(`#count-${key.toLowerCase()}`).textContent = count);
+    $("#count-cu").textContent = nodes.filter(node => /^CU[1-4]_/.test(node)).length;
     $$('[data-terminal-card]').forEach(card => card.classList.toggle("active", card.dataset.terminalCard === state.selectedTerminal));
     $("#footer-state").textContent = state.issues.length ? "● CHECK INPUT" : "● READY";
     $("#footer-state").className = state.issues.length ? "" : "status-ready";

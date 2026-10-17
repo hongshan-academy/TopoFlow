@@ -38,7 +38,7 @@ from flow_service import (
 )
 from solver import solve_native
 from simulator import simulate_frames
-from graph import Graph
+from graph import Graph, control_gear
 from config import DEFAULT_CONFIG
 
 LOG_DIR = Path("logs")
@@ -167,7 +167,14 @@ def _convert_for_topoflow(nodes: list[dict], edges: list[dict]) -> dict:
             id_mapping[nid] = "Out"
             continue
         out_d, in_d = out_deg.get(nid, 0), in_deg.get(nid, 0)
-        if ntype == "S":
+        if ntype == "U":
+            gear = control_gear(nid)
+            if gear is None:
+                raise ValueError(f"Invalid control unit ID: {nid}")
+            if (in_d, out_d) != (1, 1):
+                raise ValueError(f"Control unit {nid} must have degree (1, 1)")
+            tf_type = f"CU{gear}"
+        elif ntype == "S":
             if out_d < 2 or out_d > 3:
                 raise ValueError(f"Splitter {nid} has out-degree {out_d}, expected 2 or 3; cannot build physical layout")
             tf_type = "S3" if out_d == 3 else "S2"
