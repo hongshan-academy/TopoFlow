@@ -159,8 +159,12 @@ for single-item networks. Pipe CU exports require an explicit rate baseline.
         match = FAMILY.fullmatch(node)
         if not match:
             raise ValueError(f'unsupported facility {node}')
-        family = match[1]
-        if machine.get('topoflow_node_type', family) != family:
+        declared_family = match[1]
+        family = machine.get('topoflow_node_type', declared_family)
+        if family not in ('S2', 'S3', 'C2', 'C3', 'CU1', 'CU2', 'CU3', 'CU4'):
+            raise ValueError(f'{node}: unsupported facility family {family!r}')
+        # Degree-based repair preserves S/C node IDs, but CU identity fixes its gear.
+        if (declared_family.startswith('CU') or family.startswith('CU')) and family != declared_family:
             raise ValueError(f'{node}: declared family mismatch')
         rot = integer(machine['rot'], f'{node}.rot', 0, 3)
         pos = cell(machine['pos'])
@@ -287,6 +291,27 @@ for single-item networks. Pipe CU exports require an explicit rate baseline.
         occupied[p] = uid
         entities.append({'type': 0, 'entity_id': catalog['bridge'], 'uid': uid,
                          'x': p[0], 'y': p[1], 'building': {'rotation': 0}})
+
+    # EnKA connects adjacent facing ports even when no route declares that edge.
+    # S2/C2 still have three physical ports, so their unused ports matter too.
+    physical_nodes = {m['pos']: m for m in machines.values()}
+    for p in bridges:
+        physical_nodes[p] = {
+            'node': f'bridge at {p}', 'inputs': set(range(4)),
+            # Bridges forward only lanes fed by a route. Reverse-facing outputs
+            # stay inactive; an unintended feed into one is rejected below.
+            'outputs': {DIRECTIONS.index(out) for _, _, out in owners[p]},
+        }
+    declared_steps = {(a, b) for _, path in routes for a, b in zip(path, path[1:])}
+    for pos, source in physical_nodes.items():
+        for direction in sorted(source['outputs']):
+            neighbor = add(pos, DIRECTIONS[direction])
+            target = physical_nodes.get(neighbor)
+            if (target is not None and (direction + 2) % 4 in target['inputs']
+                    and (pos, neighbor) not in declared_steps):
+                raise ValueError(f'unintended direct connection: {source["node"]} -> '
+                                 f'{target["node"]}; separate or rotate the facilities')
+
     route_manifest = []
     for rid, path in routes:
         cuts = [0] + [i for i in range(1, len(path)-1) if path[i] in bridges] + [len(path)-1]
