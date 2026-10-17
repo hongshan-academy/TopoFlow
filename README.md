@@ -120,6 +120,10 @@ uv run uvicorn server:app --port 8081 --host 127.0.0.1
 
 ## API
 
+物理布局结果支持导出 EnKA Beta 蓝图，主页面和布局编辑器均提供复制/下载按钮。
+包含 CU 时需填写 EnKA 物品 ID；管道 CU 还需明确速率基准。
+接口、命令行与验证范围见 [EnKA 导出说明](layout/enkad-export.md)。
+
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/config` | 仿真配置（最大帧数） |
@@ -129,6 +133,7 @@ uv run uvicorn server:app --port 8081 --host 127.0.0.1
 | POST | `/api/ratio-split` | 标准分流模块生成 |
 | POST | `/api/limit-module` | 标准限流计算（任意 `p/q`，可选 `control_units`，`constructor/`） |
 | POST | `/api/topoflow-layout` | 物理布局（NDJSON 流式进度） |
+| POST | `/api/export/enkad` | 从物理布局导出 EnKA 蓝图、端点对应表和验证提示 |
 
 `rank-smt` 与 `karzanov` 按节点度数识别边界：每个 In 为 `(0, 1)`，每个 Out 为 `(1, 0)`。
 同一请求可包含多个弱连通的输入输出分量；每个含边分量均需至少一个 In 和一个 Out。

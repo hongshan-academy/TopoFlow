@@ -523,6 +523,8 @@
 
       <section class="section export-block">
         <button class="button primary" id="export-side-btn">下载 .layout.json</button>
+        <button class="button" id="enkad-copy-btn">复制 EnKA 蓝图</button>
+        <button class="button" id="enkad-download-btn">下载 EnKA 蓝图</button>
         <div class="command-help">
           <button class="button" id="copy-command-btn" aria-describedby="command-params-tip">复制总控台命令</button>
           <div class="command-tooltip" id="command-params-tip" role="tooltip">
@@ -1277,6 +1279,8 @@
     $("#check-list").innerHTML = checks.map(item => `<div class="check-item${item.warn ? " warn" : ""}">${escapeHtml(item.text)}</div>`).join("");
     $("#export-btn").disabled = state.issues.length > 0 || !!state.solution;
     $("#export-side-btn").disabled = state.issues.length > 0 || !!state.solution;
+    $("#enkad-copy-btn").disabled = !state.solution;
+    $("#enkad-download-btn").disabled = !state.solution;
   }
 
   function escapeHtml(value) {
@@ -1627,6 +1631,8 @@
       loadPastedText(text);
     });
     $("#export-btn").onclick = downloadRequest; $("#export-side-btn").onclick = downloadRequest; $("#copy-command-btn").onclick = copyCommand;
+    $("#enkad-copy-btn").onclick = () => window.exportEnkad(state.solution, true).catch(error => toast(error.message));
+    $("#enkad-download-btn").onclick = () => window.exportEnkad(state.solution, false).catch(error => toast(error.message));
     $("#review-design-btn").onclick = switchSolutionView;
     $("#demo-btn").onclick = () => loadObject(deepCopy(DEMO), "内置演示拓扑");
     $("#rank-select").onchange = event => {
@@ -1668,5 +1674,6 @@
   });
 })();
 </script>
+<script src="./enkad-export.js?v=1"></script>
 </body>
 </html>

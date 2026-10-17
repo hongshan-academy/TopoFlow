@@ -139,6 +139,27 @@ class TopoflowLayoutRequest(BaseModel):
     workers: int = 16
 
 
+class EnkadExportRequest(BaseModel):
+    solution: dict
+    item_id: Optional[int] = Field(default=None, ge=1, le=4294967295, strict=True)
+    control_items: Dict[str, int] = Field(default_factory=dict)
+    full_rate_per_minute: float | str | None = None
+    offset: Tuple[int, int] = (8, 8)
+
+
+@app.post("/api/export/enkad")
+def api_export_enkad(req: EnkadExportRequest) -> Any:
+    from layout.enkad_export import export_layout
+
+    try:
+        return export_layout(req.solution, item_id=req.item_id,
+                             control_items=req.control_items,
+                             full_rate_per_minute=req.full_rate_per_minute,
+                             offset=req.offset)
+    except (ValueError, KeyError, TypeError, IndexError) as exc:
+        return _error(f"EnKA 导出失败：{exc}")
+
+
 # -- Common helpers ---------------------------------------------------------
 
 
