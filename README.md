@@ -15,15 +15,16 @@
 - **标准限流计算**：按目标比例 `p/q` 构造标准限流模块，任意 `0 < p < q` 都可构造，输出规约步骤与满秩流量解（可逐边校验，`constructor/`）。
 - **准入口（Control Unit / CU）**：`g/5`（`g=1..4`）可由单个准入口节点 `CU{g}_0` 直接给出，其入边满速为 `g/5`。离散仿真中，首个收到的物品开启 5 tick 窗口，窗口内最多接收 `g` 件；达到限额后，即使节点已空也会拒收，直到窗口结束。规划器默认把 `CU(g)` 用作加数、减数或被缩放的内层模块，明显减小 `1/5` 族的图（如 `9/35 = CU(2) - U(7)`、`1/25 = CU(1)/5`）。可通过 `control_units=False` / `--no-control` 关闭。手动编辑时，左栏「准入口」按钮下方用 `1/5`–`4/5` 选择放置挡位，选中的准入口节点可在右栏「状态栏 → 准入口」切换挡位（节点名会同步为 `CU{g}_{i}`）。三种流量引擎（`Karzanov`、`rank-SMT`、`MILP`）与构造器/秩检查都识别准入口的 `g/5` 容量与阻塞传播。
 - **标准分流模块**：按 `p:q` 二分构造分流拓扑。
-- **物理布局**：内置布局求解器（Z3，经 `ilpbridge.py`）搜索最小可行网格并可视化（`layout/`）。
+- **物理布局**：内置 CP-SAT 布局求解器（OR-Tools）搜索最小可行网格并可视化（`layout/`）。
 
 ## 求解架构
 
-全项目只依赖一个求解引擎：**Z3**（静态编译进 Rust 扩展 `topoflow_native`，全项目共享一份编译产物）。
+流量求解与构造器中的 MILP 部分使用 **Z3**（静态编译进 Rust 扩展 `topoflow_native`，全项目共享一份编译产物）；物理布局使用 **OR-Tools CP-SAT**。
 
 - Rust 原生 `rank-smt` 直接使用 Z3；`karzanov` 的聚合 LP 同样由 Z3 精确求解。
-- Python 侧（MILP 引擎、限流模块的排列 MILP、物理布局模型）统一经 `ilpbridge.py` 调用
+- Python 侧的 MILP 引擎与限流模块的排列 MILP 经 `ilpbridge.py` 调用
   `topoflow_native.solve_ilp_exact`。
+- 物理布局（`layout/`）直接使用 `ortools.sat.python.cp_model`，与流量求解器相互独立。
 
 ## 快速开始
 

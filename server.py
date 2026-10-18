@@ -7,7 +7,7 @@ Endpoints
   - POST /api/simulate        discrete-event simulation (frame replay)
   - POST /api/ratio-split     standard ratio-split module builder
   - POST /api/limit-module    standard limit-flow computation (constructor)
-  - POST /api/topoflow-layout physical layout (layout / Z3 bridge, NDJSON stream)
+  - POST /api/topoflow-layout physical layout (OR-Tools CP-SAT, NDJSON stream)
 """
 
 from __future__ import annotations
@@ -142,7 +142,7 @@ class TopoflowLayoutRequest(BaseModel):
 # -- Common helpers ---------------------------------------------------------
 
 
-# -- Physical layout bridge (layout package, exact Z3 bridge) ---------------
+# -- Physical layout bridge (layout package, OR-Tools CP-SAT) ----------------
 def _get_layout_adapter():
     from layout import adapter
 
