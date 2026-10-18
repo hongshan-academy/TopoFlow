@@ -102,9 +102,12 @@ pub fn solve(
         optimize.assert(&flow[edge_id].ge(&margin));
         optimize.assert(&flow[edge_id].ge(&zero));
         optimize.assert(&flow[edge_id].le(&one));
-        // A control unit throttles its incoming edge to ``[0, gear/5]``.
+        // A control unit throttles its incoming edge to
+        // ``[0, gear/denominator]`` (item 5, pipe 20).
         let cap = match graph.kinds[edge.v] {
-            Kind::ControlUnit { gear } => Real::from_real(&ctx, gear as i32, 5),
+            Kind::ControlUnit { gear, denominator } => {
+                Real::from_real(&ctx, gear as i32, denominator as i32)
+            }
             _ => one.clone(),
         };
         optimize.assert(&flow[edge_id].le(&cap));
@@ -223,14 +226,14 @@ pub fn solve(
                     }
                 }
             }
-            Kind::ControlUnit { gear } => {
+            Kind::ControlUnit { gear, denominator } => {
                 let input = graph.incoming[node][0];
                 let output = graph.outgoing[node][0];
                 // Downstream blocked => upstream blocked (equivalently, upstream
                 // flowing => downstream flowing).
                 optimize.assert(&full_state[output].le(&full_state[input]));
-                // Upstream blocked => the incoming edge saturates at gear/5.
-                let cap = Real::from_real(&ctx, gear as i32, 5);
+                // Upstream blocked => the incoming edge saturates at gear/denominator.
+                let cap = Real::from_real(&ctx, gear as i32, denominator as i32);
                 let blocked = Real::from_int(&full_state[input]);
                 optimize.assert(&flow[input].ge(&(&cap - &big_m * &(&one - &blocked))));
             }
@@ -306,7 +309,9 @@ pub fn solve(
             let mut row = vec![Rat::zero(); m];
             row[edge] = Rat::one();
             let rhs = match graph.kinds[graph.edges[edge].v] {
-                Kind::ControlUnit { gear } => crate::rat_ratio(gear as i64, 5),
+                Kind::ControlUnit { gear, denominator } => {
+                    crate::rat_ratio(gear as i64, denominator as i64)
+                }
                 _ => Rat::one(),
             };
             rows.push((row, rhs));
@@ -334,13 +339,13 @@ pub fn solve(
         }
     }
     for node in 0..graph.names.len() {
-        if let Kind::ControlUnit { gear } = graph.kinds[node] {
+        if let Kind::ControlUnit { gear, denominator } = graph.kinds[node] {
             let input = graph.incoming[node][0];
-            // A blocked (delivering-only) incoming edge sits exactly at gear/5.
+            // A blocked (delivering-only) incoming edge sits exactly at gear/denominator.
             if can_out[input] {
                 let mut row = vec![Rat::zero(); m];
                 row[input] = Rat::one();
-                rows.push((row, crate::rat_ratio(gear as i64, 5)));
+                rows.push((row, crate::rat_ratio(gear as i64, denominator as i64)));
             }
         }
     }

@@ -35,6 +35,19 @@ class NodeKind(Enum):
     CU2 = ("CU2_", 1, 1)
     CU3 = ("CU3_", 1, 1)
     CU4 = ("CU4_", 1, 1)
+    ICU1 = ("ICU1_", 1, 1)
+    ICU2 = ("ICU2_", 1, 1)
+    ICU3 = ("ICU3_", 1, 1)
+    ICU4 = ("ICU4_", 1, 1)
+    PCU1 = ("PCU1_", 1, 1)
+    PCU2 = ("PCU2_", 1, 1)
+    PCU3 = ("PCU3_", 1, 1)
+    PCU4 = ("PCU4_", 1, 1)
+    PCU5 = ("PCU5_", 1, 1)
+    PCU6 = ("PCU6_", 1, 1)
+    PCU7 = ("PCU7_", 1, 1)
+    PCU8 = ("PCU8_", 1, 1)
+    PCU9 = ("PCU9_", 1, 1)
 
     def __init__(self, prefix: str, in_degree: int, out_degree: int) -> None:
         self.prefix = prefix
@@ -51,21 +64,45 @@ class NodeKind(Enum):
             return cls.IN
         if node == "Out":
             return cls.OUT
-        match = re.fullmatch(r"(S2|S3|C2|C3|CU1|CU2|CU3|CU4)_(\d+)", node)
+        match = re.fullmatch(
+            r"(S2|S3|C2|C3|CU[1-4]|ICU[1-4]|PCU[1-9])_(\d+)", node
+        )
         if match is None:
             raise ValueError(f"unknown node name: {node!r}")
         return cls[match.group(1)]
 
 
-CONTROL_PATTERN = re.compile(r"CU(?P<gear>[1-4])_(?P<index>\d+)")
+CONTROL_PATTERN = re.compile(
+    r"(?P<kind>CU|ICU|PCU)(?P<gear>\d+)_(?P<index>\d+)"
+)
+CONTROL_DENOMINATORS = {"item": 5, "pipe": 20}
 
 
-def control_gear(node: Node) -> int | None:
-    """Return the gear of a ``CU{g}_{index}`` node, or ``None`` if it is not one."""
+def control_mode(node: Node) -> str | None:
+    """Return ``item`` for CU/ICU, ``pipe`` for PCU, or ``None`` otherwise."""
     match = CONTROL_PATTERN.fullmatch(node)
     if match is None:
         return None
+    kind = match.group("kind")
+    gear = int(match.group("gear"))
+    if kind == "PCU":
+        return "pipe" if 1 <= gear <= 9 else None
+    return "item" if 1 <= gear <= 4 else None
+
+
+def control_gear(node: Node) -> int | None:
+    """Return the gear of a control-unit node, or ``None`` if it is not one."""
+    if control_mode(node) is None:
+        return None
+    match = CONTROL_PATTERN.fullmatch(node)
+    assert match is not None
     return int(match.group("gear"))
+
+
+def control_denominator(node: Node) -> int | None:
+    """Return the normalisation denominator for a control-unit node."""
+    mode = control_mode(node)
+    return None if mode is None else CONTROL_DENOMINATORS[mode]
 
 
 STRICT_PATTERNS = DEFAULT_CONFIG.strict_patterns

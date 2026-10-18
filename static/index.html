@@ -370,14 +370,13 @@
             <button data-mode-button="add-Out" class="secondary">Out `4`</button>
             <button data-mode-button="add-U" class="secondary">准入口 `5`</button>
           </div>
-          <div class="solver-options" style="margin-top:8px;display:flex;align-items:center;gap:8px">
+          <div class="solver-options" style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
             <span class="stat-key" style="font-size:12px;white-space:nowrap">准入口挡位</span>
-            <span class="gear-chips" id="palette-gear-chips">
-              <button type="button" class="gear-chip" data-gear="1">1/5</button>
-              <button type="button" class="gear-chip" data-gear="2">2/5</button>
-              <button type="button" class="gear-chip" data-gear="3">3/5</button>
-              <button type="button" class="gear-chip" data-gear="4">4/5</button>
+            <span class="gear-chips" id="palette-mode-chips">
+              <button type="button" class="gear-chip" data-control-mode="item">物品</button>
+              <button type="button" class="gear-chip" data-control-mode="pipe">管道</button>
             </span>
+            <span class="gear-chips" id="palette-gear-chips"></span>
           </div>
         </div>
 
@@ -561,6 +560,6 @@
       </aside>
     </div>
 
-    <script src="./app.js?v=4"></script>
+    <script src="./app.js?v=5"></script>
   </body>
 </html>

@@ -6,27 +6,39 @@ pub enum Kind {
     Sink,
     Splitter,
     Merger,
-    ControlUnit { gear: usize },
+    ControlUnit { gear: usize, denominator: usize },
 }
 
-/// Parse the gear of a `CU{g}_{index}` control-unit node name.
-fn control_gear(name: &str) -> Result<usize, String> {
-    let rest = name
-        .strip_prefix("CU")
-        .ok_or_else(|| format!("invalid control-unit name {name}"))?;
+/// Parse a control-unit name into `(gear, denominator)`.
+///
+/// `CU` and `ICU` are item CUs with capacity `gear/5`; `PCU` is a pipe CU
+/// with capacity `gear/20`.
+fn control_unit(name: &str) -> Result<Option<(usize, usize)>, String> {
+    let (prefix_len, max_gear, denominator) = if name.starts_with("PCU") {
+        (3, 9, 20)
+    } else if name.starts_with("ICU") {
+        (3, 4, 5)
+    } else if name.starts_with("CU") {
+        (2, 4, 5)
+    } else {
+        return Ok(None);
+    };
+    let rest = &name[prefix_len..];
     let (gear, index) = rest
         .split_once('_')
         .ok_or_else(|| format!("invalid control-unit name {name}"))?;
     let gear: usize = gear
         .parse()
         .map_err(|_| format!("invalid control-unit gear in {name}"))?;
-    if !(1..=4).contains(&gear) {
-        return Err(format!("control-unit gear out of range 1..=4 in {name}"));
+    if !(1..=max_gear).contains(&gear) {
+        return Err(format!(
+            "control-unit gear out of range 1..={max_gear} in {name}"
+        ));
     }
     if index.is_empty() || !index.bytes().all(|byte| byte.is_ascii_digit()) {
         return Err(format!("invalid control-unit index in {name}"));
     }
-    Ok(gear)
+    Ok(Some((gear, denominator)))
 }
 
 #[derive(Clone, Debug)]
@@ -85,10 +97,14 @@ impl GraphData {
         let mut sinks = Vec::new();
         for node in 0..names.len() {
             let degree = (incoming[node].len(), outgoing[node].len());
-            let kind = if degree == (1, 1) && names[node].starts_with("CU") {
-                Kind::ControlUnit {
-                    gear: control_gear(&names[node])?,
+            let kind = if let Some((gear, denominator)) = control_unit(&names[node])? {
+                if degree != (1, 1) {
+                    return Err(format!(
+                        "control unit {} must have degree (1, 1), got {:?}",
+                        names[node], degree
+                    ));
                 }
+                Kind::ControlUnit { gear, denominator }
             } else {
                 match degree {
                     (0, 1) => Kind::Source,

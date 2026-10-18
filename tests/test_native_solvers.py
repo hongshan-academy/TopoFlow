@@ -15,7 +15,7 @@ def _node_type(name: str) -> str:
         return "In"
     if name == "Out":
         return "Out"
-    if name.startswith("CU"):
+    if name.startswith(("CU", "ICU", "PCU")):
         return "U"
     if name.startswith(("S2_", "S3_")):
         return "S"
@@ -75,6 +75,29 @@ class ControlUnitSolverTests(unittest.TestCase):
                         [edge["text"] for edge in result["edgeFlows"]], expected
                     )
 
+    def test_pipe_control_unit_modules_match_between_engines(self) -> None:
+        for gear in range(1, 10):
+            node = f"PCU{gear}_0"
+            nodes = [
+                {"id": "In", "type": "In"},
+                {"id": node, "type": "U"},
+                {"id": "Out", "type": "Out"},
+            ]
+            edges = [
+                {"id": "e1", "from": "In", "to": node},
+                {"id": "e2", "from": node, "to": "Out"},
+            ]
+            fraction = Fraction(gear, 20)
+            expected = f"{fraction.numerator}/{fraction.denominator}"
+            with self.subTest(gear=gear):
+                for engine in ("rank-smt", "karzanov"):
+                    result = solve_native(engine, nodes, edges, workers=1)
+                    self.assertEqual(result["totalText"], expected)
+                    self.assertEqual(
+                        [edge["text"] for edge in result["edgeFlows"]],
+                        [expected, expected],
+                    )
+
     def test_milp_throttles_control_units(self) -> None:
         for p, q in ((7, 10), (9, 35), (1, 25)):
             certificate, _, _ = _certificate_graph(p, q)
@@ -85,6 +108,13 @@ class ControlUnitSolverTests(unittest.TestCase):
                 self.assertAlmostEqual(
                     solver_edge.flow, float(expected), places=6
                 )
+
+    def test_milp_throttles_pipe_control_units(self) -> None:
+        for gear in range(1, 10):
+            node = f"PCU{gear}_0"
+            result = solve(Graph.from_edges([("In", node), (node, "Out")]))
+            self.assertEqual(result.status, "Optimal")
+            self.assertAlmostEqual(result.edges[0].flow, gear / 20, places=6)
 
 
 MULTI_BOUNDARY_NODES = [

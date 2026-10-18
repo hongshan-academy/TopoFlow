@@ -253,7 +253,10 @@ def _limit_node_type(name: str) -> str:
         return "In"
     if name == "Out":
         return "Out"
-    if name.startswith(("CU1_", "CU2_", "CU3_", "CU4_")):
+    if name.startswith(("CU1_", "CU2_", "CU3_", "CU4_",
+                        "ICU1_", "ICU2_", "ICU3_", "ICU4_",
+                        "PCU1_", "PCU2_", "PCU3_", "PCU4_", "PCU5_",
+                        "PCU6_", "PCU7_", "PCU8_", "PCU9_")):
         return "U"
     if name.startswith(("S2_", "S3_")):
         return "S"
