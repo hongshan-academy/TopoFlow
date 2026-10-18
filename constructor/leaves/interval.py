@@ -12,7 +12,7 @@ from itertools import permutations
 
 from ..model.arithmetic import ceil_log3
 from ..model.certificate import EdgeState, FlowCertificate
-from ..model.graph import NodeKind
+from graph import NodeKind
 from ..operators.composition import boundary_flow
 from .unit import half_certificate, third_certificate
 

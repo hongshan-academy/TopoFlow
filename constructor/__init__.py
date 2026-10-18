@@ -1,5 +1,6 @@
 """Construct exact TopoFlow graphs for rational boundary flows."""
 
+from .leaves.unit import control_certificate
 from .model.certificate import EdgeState, FlowCertificate
 from .model.recipe import ReductionRecipe, TopologyCost
 from .operators.composition import (
@@ -32,6 +33,7 @@ __all__ = [
     "TopologyCost",
     "boundary_flow",
     "construct_fraction",
+    "control_certificate",
     "crosscheck_karzanov",
     "full_certificate",
     "parallel_sum",

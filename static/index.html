@@ -63,6 +63,23 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 10px;
       }
+      .gear-chips { display: inline-flex; gap: 6px; }
+      .gear-chip {
+        padding: 3px 8px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: white;
+        color: var(--ink);
+        font-size: 12px;
+        line-height: 1.4;
+        cursor: pointer;
+      }
+      .gear-chip.is-active {
+        background: #7a5cc4;
+        border-color: #7a5cc4;
+        color: white;
+        font-weight: 700;
+      }
       .buttons {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -211,6 +228,10 @@
       .edge-group.is-blocked.is-selected .edge-line {
         filter: drop-shadow(0 0 3px rgba(220, 38, 38, 0.95));
       }
+      .edge-group.is-full .edge-line { stroke: #2563eb; }
+      .edge-group.is-full.is-selected .edge-line {
+        filter: drop-shadow(0 0 3px rgba(37, 99, 235, 0.95));
+      }
       .edge-flow {
         fill: #1f2937;
         font-size: 11px;
@@ -266,6 +287,33 @@
         line-height: 1.5;
       }
       .status-box { display: none; }
+      .object-status {
+        display: grid;
+        gap: 10px;
+        margin-bottom: 16px;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #fffdf8;
+      }
+      .object-status h2 { margin: 0; }
+      .object-status-section { display: grid; gap: 5px; }
+      .object-status-section h3 {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .object-status-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        font-size: 13px;
+        line-height: 1.4;
+      }
+      .object-status-row span:first-child { color: var(--muted); }
+      .object-status-row span:last-child { text-align: right; overflow-wrap: anywhere; }
+      .object-status-empty { color: var(--muted); font-size: 13px; line-height: 1.5; }
 
       .app-toast {
         position: fixed;
@@ -320,6 +368,16 @@
             <button data-mode-button="add-C">C `2`</button>
             <button data-mode-button="add-In" class="secondary">In `3`</button>
             <button data-mode-button="add-Out" class="secondary">Out `4`</button>
+            <button data-mode-button="add-U" class="secondary">准入口 `5`</button>
+          </div>
+          <div class="solver-options" style="margin-top:8px;display:flex;align-items:center;gap:8px">
+            <span class="stat-key" style="font-size:12px;white-space:nowrap">准入口挡位</span>
+            <span class="gear-chips" id="palette-gear-chips">
+              <button type="button" class="gear-chip" data-gear="1">1/5</button>
+              <button type="button" class="gear-chip" data-gear="2">2/5</button>
+              <button type="button" class="gear-chip" data-gear="3">3/5</button>
+              <button type="button" class="gear-chip" data-gear="4">4/5</button>
+            </span>
           </div>
         </div>
 
@@ -327,8 +385,8 @@
           <div class="solver-group">
             <label class="stat-key" for="solver-model" style="font-size:13px">求解模型</label>
             <select id="solver-model" style="width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:10px;background:white;color:var(--ink);font-size:13px">
-              <option value="rust-karzanov" data-kind="rust" selected>Karzanov (polynomial) (Z3, exact)</option>
-              <option value="rust-rank-smt" data-kind="rust">rank-SMT (Z3, exact)</option>
+              <option value="rust-karzanov" data-kind="rust">Karzanov (polynomial) (Z3, exact)</option>
+              <option value="rust-rank-smt" data-kind="rust" selected>rank-SMT (Z3, exact)</option>
               <option value="milp" data-kind="milp">MILP (Z3, exact)</option>
             </select>
             <div id="workers-row">
@@ -397,6 +455,7 @@
         </div>
 
         <div class="buttons">
+          <button id="conjugate-btn" class="secondary">共轭</button>
           <button id="clear-btn" class="secondary">清空</button>
         </div>
 
@@ -445,6 +504,10 @@
       </main>
 
       <aside class="panel inspector">
+        <section class="object-status" aria-live="polite" aria-label="选中对象状态">
+          <h2>状态栏</h2>
+          <div id="object-status-content" class="object-status-empty">选择一个节点或边以查看状态。</div>
+        </section>
         <hr style="margin:0 0 14px;border:none;border-top:1px solid var(--line)" />
         <h2>物理布局 (TopoFlow)</h2>
         <div class="buttons">
@@ -486,6 +549,9 @@
               <input id="limit-optimize" type="checkbox" style="width:auto" /> 深搜
             </label>
             <label class="checkbox-row" style="font-size:13px">
+              <input id="limit-control" type="checkbox" style="width:auto" checked /> 准入口
+            </label>
+            <label class="checkbox-row" style="font-size:13px">
               <input id="limit-crosscheck" type="checkbox" style="width:auto" /> Rust 复核
             </label>
           </div>
@@ -495,6 +561,6 @@
       </aside>
     </div>
 
-    <script src="./app.js?v=2"></script>
+    <script src="./app.js?v=4"></script>
   </body>
 </html>

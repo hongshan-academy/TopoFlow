@@ -13,6 +13,7 @@ class EdgeResult:
     target: str
     flow: float
     is_blocked: bool
+    is_unblocked: bool = False
 
 
 @dataclass

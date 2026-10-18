@@ -6,13 +6,14 @@
 ## 功能
 
 - **图形编辑**：放置/连接 In、Out、S、C 节点，支持 WG 文本导入导出、JSON 存档、WASD 平移画布。
-- **流量求解**（全部基于唯一内嵌的 Z3 引擎，输出精确有理数）：
+- **流量求解**（全部基于唯一内嵌的 Z3 引擎，输出精确有理数，支持多个单端口 In/Out 节点）：
   - `Karzanov (polynomial) (Z3, exact)`：Rust 原生 Karzanov 稳定分配求解器，聚合 LP 由 Z3 精确求解（`native/src/karzanov.rs`）。
   - `rank-SMT (Z3, exact)`：基于 rank 的方法，SMT 辅助边状态搜索（`native/src/rank_smt.rs`）。
   - `MILP (Z3, exact)`：MILP 多解求解（`solver.py`，经 `ilpbridge.py` 调用 Z3）。
   - 三种引擎统一由 `solver.py` 提供并共享同一个求解 API（`/api/solve`）。
 - **离散仿真**：逐帧回放传送带队列与节点占用（`simulator.py`，边容量 4）。
 - **标准限流计算**：按目标比例 `p/q` 构造标准限流模块，任意 `0 < p < q` 都可构造，输出规约步骤与满秩流量解（可逐边校验，`constructor/`）。
+- **准入口（Control Unit / CU）**：`g/5`（`g=1..4`）可由单个准入口节点 `CU{g}_0` 直接给出，其入边满速为 `g/5`。离散仿真中，首个收到的物品开启 5 tick 窗口，窗口内最多接收 `g` 件；达到限额后，即使节点已空也会拒收，直到窗口结束。规划器默认把 `CU(g)` 用作加数、减数或被缩放的内层模块，明显减小 `1/5` 族的图（如 `9/35 = CU(2) - U(7)`、`1/25 = CU(1)/5`）。可通过 `control_units=False` / `--no-control` 关闭。手动编辑时，左栏「准入口」按钮下方用 `1/5`–`4/5` 选择放置挡位，选中的准入口节点可在右栏「状态栏 → 准入口」切换挡位（节点名会同步为 `CU{g}_{i}`）。三种流量引擎（`Karzanov`、`rank-SMT`、`MILP`）与构造器/秩检查都识别准入口的 `g/5` 容量与阻塞传播。
 - **标准分流模块**：按 `p:q` 二分构造分流拓扑。
 - **物理布局**：内置布局求解器（Z3，经 `ilpbridge.py`）搜索最小可行网格并可视化（`layout/`）。
 
@@ -44,6 +45,54 @@ wget -qO- https://astral.sh/uv/install.sh | sh
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
+构建 Rust 原生扩展还需要 Rust 工具链与 LLVM/libclang（如已安装，请跳过）。
+
+**Rust**（Rust ≥ 1.85）
+
+Linux 和 macOS：
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+Windows：
+```powershell
+winget install -e --id Rustlang.Rustup
+```
+
+**LLVM / libclang**（bindgen 生成 Z3 绑定时需要）
+
+Windows：
+```powershell
+winget install -e --id LLVM.LLVM
+```
+
+默认安装到 `C:\Program Files\LLVM`，`server.ps1` 会自动设置 `LIBCLANG_PATH`；
+安装到其他位置时需要手动指定：
+```powershell
+$env:LIBCLANG_PATH = "<LLVM 安装目录>\bin"
+```
+
+macOS：
+```sh
+brew install llvm
+export LIBCLANG_PATH="$(brew --prefix llvm)/lib"
+```
+
+Debian / Ubuntu：
+```sh
+sudo apt-get install libclang-dev
+```
+
+Fedora：
+```sh
+sudo dnf install clang-devel
+```
+
+Arch Linux：
+```sh
+sudo pacman -S clang
+```
+
 ### 启动服务器
 
 **脚本启动**
@@ -60,8 +109,10 @@ uv sync
 uv run uvicorn server:app --port 8081 --host 127.0.0.1
 ```
 
-> Rust 扩展通过 maturin 构建，需要 Rust 工具链（edition 2024，Rust ≥ 1.85）与 LLVM/libclang。
-> 若 LLVM 安装在 `C:\Program Files\LLVM`，`server.ps1` 会自动设置 `LIBCLANG_PATH`。
+> Rust 扩展通过 maturin 构建，依赖见上方说明。`pyproject.toml` 中配置了
+> `no-build-isolation-package = ["topoflow"]`，构建将直接使用项目 `.venv` 的解释器，
+> 避免 uv 临时构建环境被回收后，Z3 的 CMake 缓存的 Python 路径失效导致重建失败
+> （maturin 由 dev 依赖组提供，`uv sync` 会先安装它再构建本项目）。
 
 ## API
 
@@ -72,8 +123,12 @@ uv run uvicorn server:app --port 8081 --host 127.0.0.1
 | POST | `/api/solve` | 流量求解（`engine=karzanov` / `rank-smt` / `milp`，精确有理数输出） |
 | POST | `/api/simulate` | 离散事件仿真（返回逐帧状态） |
 | POST | `/api/ratio-split` | 标准分流模块生成 |
-| POST | `/api/limit-module` | 标准限流计算（任意 `p/q`，`constructor/`） |
+| POST | `/api/limit-module` | 标准限流计算（任意 `p/q`，可选 `control_units`，`constructor/`） |
 | POST | `/api/topoflow-layout` | 物理布局（NDJSON 流式进度） |
+
+`rank-smt` 与 `karzanov` 按节点度数识别边界：每个 In 为 `(0, 1)`，每个 Out 为 `(1, 0)`。
+同一请求可包含多个弱连通的输入输出分量；每个含边分量均需至少一个 In 和一个 Out。
+结果以逐边精确流量为准；`totalFlow` 及其有理数字段为所有 In 出边流量的总和，并等于所有 Out 入边流量的总和。
 
 
 ## 测试
@@ -95,9 +150,9 @@ uv run python -m benchmarks.benchmark_flow_solvers
 
 | 后端 | 总耗时 | 中位 | P95 | 边精确 |
 |---|---|---|---|---|
-| `Karzanov (polynomial) (Z3, exact)` | 8.86 s | 51.5 ms | 141 ms | 658/658 |
-| `rank-SMT (Z3, exact)` | 9.79 s | 36.2 ms | 327 ms | 658/658 |
-| `python-milp` | 30.62 s | 94.8 ms | 871 ms | 658/658 |
+| `Karzanov (polynomial) (Z3, exact)` | 7.21 s | 43.1 ms | 114 ms | 658/658 |
+| `rank-SMT (Z3, exact)` | 7.96 s | 31.2 ms | 211 ms | 658/658 |
+| `python-milp` | 20.62 s | 73.2 ms | 616 ms | 658/658 |
 
 0 处不匹配。`Karzanov` 的聚合 LP 由 Z3 精确求解（`native/src/z3_lp.rs`），固定单线程以保证结果可复现。
 

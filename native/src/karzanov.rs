@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 use num_traits::{One, Zero};
 
 use crate::graph::{GraphData, Kind};
-use crate::{NativeFlowSolution, Rat, rat};
+use crate::{NativeFlowSolution, Rat, rat, rat_ratio};
 
 #[derive(Clone)]
 struct Contract {
@@ -58,10 +58,16 @@ fn build_instance(graph: &GraphData) -> Result<Instance, String> {
 
     let mut base = Vec::new();
     for (edge_id, edge) in graph.edges.iter().enumerate() {
+        // A control unit throttles the full speed of its incoming edge: a
+        // `CU{g}_{i}` node lowers that edge's capacity from 1 to `g / 5`.
+        let capacity = match graph.kinds[edge.v] {
+            Kind::ControlUnit { gear } => rat_ratio(gear as i64, 5),
+            _ => rat(1),
+        };
         base.push(Contract {
             left: left_of[edge.u].ok_or("edge leaves sink")?,
             right: right_of[edge.v].ok_or("edge enters source")?,
-            capacity: rat(1),
+            capacity,
             left_tie: if graph.kinds[edge.u] == Kind::Source {
                 0
             } else {
@@ -1132,8 +1138,6 @@ pub fn solve(
 ) -> Result<NativeFlowSolution, String> {
     let graph = GraphData::new(edges)?;
     let instance = build_instance(&graph)?;
-    let source_edge = graph.outgoing[graph.source][0];
-    let sink_edge = graph.incoming[graph.sink][0];
     let (assignment, iterations, _) = stable_assignment(&instance, max_iterations)?;
     validate_stable_assignment(&instance, &assignment)
         .map_err(|error| format!("stable validation failed: {error}"))?;
@@ -1148,11 +1152,15 @@ pub fn solve(
         }
     }
     validate_original_flow(&graph, &flows)?;
-    let total = flows[source_edge].clone();
-    let sink = flows[sink_edge].clone();
-    if total != sink {
+    let total = graph.sources.iter().fold(Rat::zero(), |sum, &source| {
+        sum + &flows[graph.outgoing[source][0]]
+    });
+    let sink_total = graph.sinks.iter().fold(Rat::zero(), |sum, &sink| {
+        sum + &flows[graph.incoming[sink][0]]
+    });
+    if total != sink_total {
         return Err(format!(
-            "stable assignment has unequal source and sink totals: {total} vs {sink}"
+            "stable assignment has unequal aggregate source and sink totals: {total} vs {sink_total}"
         ));
     }
     Ok(NativeFlowSolution::from_fractions(
@@ -1184,7 +1192,7 @@ mod tests {
             stable_assignment(&instance, 10_000).expect("stable solver converges");
         validate_stable_assignment(&instance, &assignment).expect("stable assignment");
         validate_cover_symmetry(&instance, &assignment).expect("symmetric cover assignment");
-        let source_edge = graph.outgoing[graph.source][0];
+        let source_edge = graph.outgoing[graph.sources[0]][0];
         let covered_edge = instance
             .edges
             .iter()
@@ -1289,5 +1297,19 @@ mod tests {
             1,
             17,
         );
+    }
+
+    #[test]
+    fn solves_multiple_boundary_components() {
+        let result = solve(
+            edges(&[("InputA", "OutputA"), ("InputB", "OutputB")]),
+            10_000,
+            1e-10,
+        )
+        .expect("multiple boundary components are supported");
+        assert_eq!(result.flow_numerators, vec![BigInt::from(1), BigInt::from(1)]);
+        assert_eq!(result.flow_denominators, vec![BigInt::from(1), BigInt::from(1)]);
+        assert_eq!(result.total_numerator, BigInt::from(2));
+        assert_eq!(result.total_denominator, BigInt::from(1));
     }
 }

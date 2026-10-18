@@ -9,6 +9,7 @@ from ..leaves.unit import (
     DEFAULT_EXHAUSTION_PAIR_LIMIT,
     UnitPlan,
     UnitSolver,
+    control_certificate,
     plan_unit,
     realize_unit,
 )
@@ -49,6 +50,9 @@ class ConstructionCore:
             certificate = realize_unit(self.unit_plan(denominator))
             self._units[denominator] = certificate
         return self._units[denominator]
+
+    def control(self, gear: int) -> FlowCertificate:
+        return control_certificate(gear)
 
     def add(self, left: FlowCertificate, right: FlowCertificate) -> FlowCertificate:
         return parallel_sum(left, right)

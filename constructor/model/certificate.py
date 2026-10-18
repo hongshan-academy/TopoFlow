@@ -9,7 +9,7 @@ from enum import Enum
 from fractions import Fraction
 from time import perf_counter
 
-from .graph import Edge, Graph
+from graph import Edge, Graph, control_gear
 
 logger = logging.getLogger(__name__)
 
@@ -80,17 +80,25 @@ class FlowCertificate:
     ) -> tuple[str, ...]:
         errors: list[str] = list(self.graph.validation_errors())
         for index, flow in enumerate(self.flows):
-            if not 0 < flow <= 1:
-                errors.append(f"edge {index} has flow outside (0, 1]: {flow}")
+            capacity = _edge_capacity(self.edges[index])
+            if not 0 < flow <= capacity:
+                errors.append(
+                    f"edge {index} has flow outside (0, {capacity}]: {flow}"
+                )
         if not self.fixed:
             errors.append("certificate must contain at least one fixed edge")
         for index, edge in enumerate(self.edges):
             candidate = _is_fixed_candidate(edge)
+            capacity = _edge_capacity(edge)
             if index in self.fixed:
-                if self.flows[index] != 1:
-                    errors.append(f"fixed edge {index} does not have flow 1")
-            elif candidate and self.flows[index] >= 1:
-                errors.append(f"non-fixed candidate edge {index} is not below 1")
+                if self.flows[index] != capacity:
+                    errors.append(
+                        f"fixed edge {index} does not have flow {capacity}"
+                    )
+            elif candidate and self.flows[index] >= capacity:
+                errors.append(
+                    f"non-fixed candidate edge {index} is not below {capacity}"
+                )
             source, target = edge
             state = self.states[index]
             if state is EdgeState.PARTIAL and not (
@@ -215,8 +223,14 @@ def _is_converger(node: str) -> bool:
 def _is_fixed_candidate(edge: Edge) -> bool:
     source, target = edge
     return (source == "In" or _is_converger(source)) and (
-        target == "Out" or _is_splitter(target)
+        target == "Out" or _is_splitter(target) or control_gear(target) is not None
     )
+
+
+def _edge_capacity(edge: Edge) -> Fraction:
+    """Return an edge's full speed: ``gear/5`` into a control unit, else 1."""
+    gear = control_gear(edge[1])
+    return Fraction(gear, 5) if gear is not None else Fraction(1)
 
 
 def _equation_rows(

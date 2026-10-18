@@ -120,7 +120,7 @@ def build_ratio_graph(p: int, q: int, max_share: float | None = None) -> dict:
     a, b, N = find_ratio_scheme(p, q, max_share)
     t1, t2, t3 = N - q, p, q - p
     if min(t1, t2, t3) < 0 or p <= 0 or q <= 0:
-        raise ValueError("需满足 0 < p < q 且 q 为整数")
+        raise ValueError("Requires 0 < p < q with integer q")
 
     nodes: list[dict] = []
     edges: list[dict] = []
@@ -173,7 +173,7 @@ def build_ratio_graph(p: int, q: int, max_share: float | None = None) -> dict:
     else:
         if max_share is not None and max_share * N <= 1:
             raise ValueError(
-                f"无法通过细分使每份占比小于 {max_share:.4g}（N={N}）")
+                f"Cannot refine splits so each share stays below {max_share:.4g} (N={N})")
         def build_full(value, ea, eb):
             if ea == 0 and eb == 0:
                 return Node(value)
@@ -253,16 +253,18 @@ def _limit_node_type(name: str) -> str:
         return "In"
     if name == "Out":
         return "Out"
+    if name.startswith(("CU1_", "CU2_", "CU3_", "CU4_")):
+        return "U"
     if name.startswith(("S2_", "S3_")):
         return "S"
     if name.startswith(("C2_", "C3_")):
         return "C"
-    raise ValueError(f"未知构造节点: {name}")
+    raise ValueError(f"Unknown constructor node: {name}")
 
 
 def build_limit_module(p: int, q: int, optimize: bool, search_range: int,
                        reduction_depth: int, reduction_state_limit: int,
-                       cross_check: bool) -> dict:
+                       cross_check: bool, control_units: bool = True) -> dict:
     from constructor import boundary_flow, construct_fraction, crosscheck_karzanov
 
     result = construct_fraction(
@@ -271,6 +273,7 @@ def build_limit_module(p: int, q: int, optimize: bool, search_range: int,
         search_range=search_range,
         reduction_depth=reduction_depth,
         reduction_state_limit=reduction_state_limit,
+        control_units=control_units,
     )
     cert = result.certificate
 
@@ -371,6 +374,7 @@ def build_solution_payload(req_edges: Sequence[EdgeLike], result: SolverResult) 
             "id": req_edge.id,
             "flow": frac,
             "isBlocked": solver_edge.is_blocked,
+            "isFull": solver_edge.is_blocked and solver_edge.is_unblocked,
         })
 
     node_flows_map: Dict[str, float] = {}

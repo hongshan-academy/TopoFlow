@@ -8,6 +8,7 @@
 
   const API_BASE = "";
   const GRAPH_BOUNDS = { width: 2700, height: 1680, padding: 36 };
+  const SIM_EDGE_CAPACITY = 4;
 
   // WASD/方向键平移：按键集合 + rAF 循环实现连续平滑移动
   const PAN_KEYS = {
@@ -32,20 +33,24 @@
     "add-Out": "放置输出",
     "add-S": "放置分流器",
     "add-C": "放置汇流器",
+    "add-U": "放置准入口",
     edge: "连边",
   };
   const TYPE_LABELS = {
-    In: "In", Out: "Out", S: "S", C: "C",
+    In: "In", Out: "Out", S: "S", C: "C", U: "CU",
   };
   const NODE_COLORS = {
-    In: "#2e8b57", Out: "#c84c3a", S: "#2f6fed", C: "#d98a1f",
+    In: "#2e8b57", Out: "#c84c3a", S: "#2f6fed", C: "#d98a1f", U: "#7a5cc4",
   };
   const NODE_CAPACITY = {
     In: { maxIn: 0, maxOut: 1 },
     Out: { maxIn: 1, maxOut: 0 },
     S: { maxIn: 1, maxOut: 3 },
     C: { maxIn: 3, maxOut: 1 },
+    U: { maxIn: 1, maxOut: 1 },
   };
+  // Fallback so an unrecognized node type can never crash graph import.
+  const nodeCapacity = (type) => NODE_CAPACITY[type] || { maxIn: 1, maxOut: 1 };
   const INITIAL_GRAPH = {
     nodes: [
       { id: "In1", type: "In", x: 90, y: 280 },
@@ -95,7 +100,8 @@
     message: "选择模式下可选中、拖动和删除节点。",
     backendBusy: false,
     topologyLayout: null,
-    solverModel: "rust-karzanov",
+    solverModel: "rust-rank-smt",
+    controlGear: 1,
     // 离散仿真
     simFrames: [],
     simFrame: 0,
@@ -109,6 +115,8 @@
 
   const els = {
     svg: document.getElementById("graph"),
+    objectStatusContent: document.getElementById("object-status-content"),
+    conjugate: document.getElementById("conjugate-btn"),
     clear: document.getElementById("clear-btn"),
     save: document.getElementById("save-btn"),
     load: document.getElementById("load-btn"),
@@ -129,6 +137,7 @@
     saveList: document.getElementById("save-list"),
     graphStats: document.getElementById("graph-stats"),
     toolButtons: [...document.querySelectorAll("[data-mode-button]")],
+    paletteGearChips: [...document.querySelectorAll("#palette-gear-chips .gear-chip")],
     importJsonInput: document.getElementById("import-json-input"),
     importBtn: document.getElementById("import-btn"),
     importStatus: document.getElementById("import-status"),
@@ -164,6 +173,7 @@
     limitDepth: document.getElementById("limit-depth"),
     limitOptimize: document.getElementById("limit-optimize"),
     limitCrosscheck: document.getElementById("limit-crosscheck"),
+    limitControl: document.getElementById("limit-control"),
     limitStatus: document.getElementById("limit-status"),
     limitInfo: document.getElementById("limit-info"),
   };
@@ -201,7 +211,7 @@
           numerator: ef.flow.numerator,
           denominator: ef.flow.denominator,
         };
-        edgeBlocked[ef.id] = ef.isBlocked ? "fb" : "nb";
+        edgeBlocked[ef.id] = ef.isFull ? "full" : ef.isBlocked ? "fb" : "nb";
       }
       const nodeFlows = {};
       for (const nf of sol.nodeFlows || []) {
@@ -268,6 +278,7 @@
   // 把 Rust 逐边流量包装成单个“状态对象”，复用现有 edgeFlows 渲染
   function wrapNativeResult(res) {
     const edgeFlows = {};
+    const edgeBlocked = {};
     state.graph.edges.forEach((edge, i) => {
       const ef = res.edgeFlows && res.edgeFlows[i];
       if (!ef) return;
@@ -276,8 +287,12 @@
         numerator: ef.numerator ?? ef.flow,
         denominator: ef.denominator ?? 1,
       };
+      if (ef.state) {
+        edgeBlocked[edge.id] =
+          ef.state === "full" ? "full" : ef.state === "blocked" ? "fb" : "nb";
+      }
     });
-    return [{ states: [{ edgeBlocked: {}, edgeFlows, nodeFlows: {} }] }];
+    return [{ states: [{ edgeBlocked, edgeFlows, nodeFlows: {} }] }];
   }
 
   async function triggerNativeSolve() {
@@ -684,6 +699,7 @@
         optimize: !!opts.optimize,
         reduction_depth: opts.reductionDepth ?? 3,
         cross_check: !!opts.crossCheck,
+        control_units: opts.controlUnits !== false,
       }),
     });
     if (!resp.ok) {
@@ -709,6 +725,7 @@
       const data = await apiLimitModule(p, q, {
         optimize: els.limitOptimize.checked,
         crossCheck: els.limitCrosscheck.checked,
+        controlUnits: els.limitControl ? els.limitControl.checked : true,
         reductionDepth: clampInt(els.limitDepth.value, 1, 8, 3),
       });
       if (!data.nodes || !data.nodes.length) {
@@ -764,6 +781,7 @@
   // ── 事件绑定 ──────────────────────────────────────────────────
 
   function bindEvents() {
+    els.conjugate.addEventListener("click", conjugateGraph);
     els.clear.addEventListener("click", clearGraphToEndpoints);
 
     // 求解按钮（按当前模型分发：rust → 原生求解；其余 → MILP）
@@ -811,6 +829,13 @@
     for (const button of els.toolButtons) {
       button.addEventListener("click", () => {
         setMode(button.getAttribute("data-mode-button"));
+      });
+    }
+
+    for (const chip of els.paletteGearChips) {
+      chip.addEventListener("click", () => {
+        state.controlGear = Number(chip.getAttribute("data-gear"));
+        syncPaletteGear();
       });
     }
 
@@ -871,7 +896,7 @@
   function onKeyDown(event) {
     if (isEditableTarget(event.target)) return;
     const keyMap = {
-      "1": "add-S", "2": "add-C", "3": "add-In", "4": "add-Out",
+      "1": "add-S", "2": "add-C", "3": "add-In", "4": "add-Out", "5": "add-U",
     };
     if (keyMap[event.key]) {
       event.preventDefault();
@@ -1076,7 +1101,7 @@
 
   function addNode(type, point) {
     const node = {
-      id: nextId(type),
+      id: type === "U" ? nextControlId(state.controlGear) : nextId(type),
       type,
       x: point.x,
       y: point.y,
@@ -1139,8 +1164,8 @@
     const fromNode = getNode(fromId);
     const toNode = getNode(toId);
     if (fromId === toId) return { ok: false, message: "不允许创建自环。" };
-    const fromShape = NODE_CAPACITY[fromNode.type];
-    const toShape = NODE_CAPACITY[toNode.type];
+    const fromShape = nodeCapacity(fromNode.type);
+    const toShape = nodeCapacity(toNode.type);
     if (fromShape.maxOut === 0) return { ok: false, message: `${fromNode.id} 不能作为边的起点。` };
     if (toShape.maxIn === 0) return { ok: false, message: `${toNode.id} 不能作为边的终点。` };
 
@@ -1177,7 +1202,138 @@
 
   function render() {
     renderControls();
+    renderObjectStatus();
     renderGraph();
+  }
+
+  function renderObjectStatus() {
+    const content = els.objectStatusContent;
+    if (!content) return;
+    ensureSelectedObject();
+    const selected = state.selected;
+    if (!selected) {
+      content.className = "object-status-empty";
+      content.textContent = "图中没有可选的节点或边。";
+      return;
+    }
+
+    const rows = (items) => items.map(([label, value]) => `
+      <div class="object-status-row"><span>${escapeHtml(label)}</span><span>${escapeHtml(value)}</span></div>
+    `).join("");
+    const section = (title, items) => items.length ? `
+      <section class="object-status-section">
+        <h3>${escapeHtml(title)}</h3>
+        ${rows(items)}
+      </section>
+    ` : "";
+    const solution = getCurrentSolution();
+    const snapshot = getSimSnapshot();
+    const noSolution = !state.solveAttempted
+      ? "尚未求解"
+      : state.flowGroups.length > 0 ? "当前结果未提供该字段" : "当前无可用解";
+    let objectRows;
+    let solverRows;
+    let simulationRows;
+    let cycleRatio;
+    let gearSection = "";
+
+    if (selected.kind === "node") {
+      const node = state.graph.nodes.find((item) => item.id === selected.id);
+      if (!node) {
+        content.className = "object-status-empty";
+        content.textContent = "所选节点已不存在。";
+        return;
+      }
+      const incoming = state.graph.edges.filter((edge) => edge.to === node.id).length;
+      const outgoing = state.graph.edges.filter((edge) => edge.from === node.id).length;
+      const nodeFlow = solution?.nodeFlows?.[node.id];
+      const nodeSnapshot = snapshot?.nodes?.[node.id];
+      if (node.type === "In" || node.type === "Out") {
+        // In/Out 自身不持有物品，周期流量取其唯一下游/上游边的流量
+        const linked = node.type === "In"
+          ? state.graph.edges.find((item) => item.from === node.id)
+          : state.graph.edges.find((item) => item.to === node.id);
+        cycleRatio = linked ? state.simCycle?.edgeRatios?.[linked.id] : undefined;
+      } else {
+        cycleRatio = state.simCycle?.nodeRatios?.[node.id];
+      }
+      objectRows = [
+        ["节点", `${node.id}（${TYPE_LABELS[node.type] || node.type}）`],
+        ["入边 / 出边", `${incoming} / ${outgoing}`],
+      ];
+      if (node.type === "U") {
+        const current = controlGearOf(node.id) ?? 1;
+        const chips = [1, 2, 3, 4]
+          .map(
+            (g) =>
+              `<button type="button" class="gear-chip${g === current ? " is-active" : ""}" data-gear="${g}" onclick="window._setControlGear('${escapeHtml(node.id)}', ${g})">${g}/5</button>`
+          )
+          .join("");
+        gearSection = `<section class="object-status-section"><h3>准入口</h3><div class="object-status-row"><span>挡位</span><span class="gear-chips">${chips}</span></div></section>`;
+      }
+      solverRows = nodeFlow
+        ? [["流量", nodeFlow.text]]
+        : solution ? [] : [["状态", noSolution]];
+      simulationRows = [
+        ["周期流量", cycleRatio?.textReduced ?? cycleRatio?.text ?? (state.simCycle ? "未提供" : "尚未仿真")],
+        ["当前帧", snapshot
+          ? (nodeSnapshot?.hasItem === true ? "持有物品" : nodeSnapshot?.hasItem === false ? "空闲" : "未提供")
+          : "尚未仿真"],
+      ];
+    } else {
+      const edge = state.graph.edges.find((item) => item.id === selected.id);
+      if (!edge) {
+        content.className = "object-status-empty";
+        content.textContent = "所选边已不存在。";
+        return;
+      }
+      const edgeFlow = solution?.edgeFlows?.[edge.id];
+      const blocked = solution?.edgeBlocked?.[edge.id];
+      const solverState = {
+        nb: "正常",
+        fb: "阻塞",
+        sb: "半阻塞",
+        full: "满载",
+      }[blocked];
+      const edgeSnapshot = snapshot?.edges?.[edge.id];
+      cycleRatio = state.simCycle?.edgeRatios?.[edge.id];
+      objectRows = [
+        ["边", edge.id],
+        ["端点", `${edge.from} → ${edge.to}`],
+      ];
+      solverRows = [
+        ["流量", edgeFlow?.text ?? noSolution],
+        ["状态", solverState ?? (state.solveAttempted
+          ? state.flowGroups.length > 0 ? "当前结果未提供该字段" : "当前无可用解"
+          : "尚未求解")],
+      ];
+      simulationRows = [
+        ["周期流量", cycleRatio?.textReduced ?? cycleRatio?.text ?? (state.simCycle ? "未提供" : "尚未仿真")],
+        ["当前帧队列", snapshot
+          ? Array.isArray(edgeSnapshot?.queue)
+            ? `${edgeSnapshot.queue.length} / ${SIM_EDGE_CAPACITY}`
+            : "未提供"
+          : "尚未仿真"],
+      ];
+    }
+
+    const frame = snapshot
+      ? (Number.isInteger(snapshot.frame) ? snapshot.frame + 1 : state.simFrame + 1)
+      : null;
+    if (frame !== null) {
+      simulationRows.unshift(["回放帧", `${frame} / ${state.simFrames.length}`]);
+    }
+    if (state.simCycle?.period != null) {
+      simulationRows.push(["周期长度", `${state.simCycle.period} 帧`]);
+    }
+
+    content.className = "";
+    content.innerHTML = [
+      section("对象", objectRows),
+      gearSection,
+      section("求解", solverRows),
+      section("仿真", simulationRows),
+    ].join("");
   }
 
   function renderControls() {
@@ -1214,6 +1370,7 @@
     }
     els.graphStats.textContent = `${state.graph.nodes.length} 个节点 / ${state.graph.edges.length} 条边`;
     renderSaveControls();
+    syncPaletteGear();
 
     for (const button of els.toolButtons) {
       const active = button.getAttribute("data-mode-button") === state.mode;
@@ -1230,15 +1387,16 @@
       const activeClass = (simSnap?.edges?.[edge.id]?.queue || []).length > 0 ? " is-active" : "";
       const selectedClass =
         state.selected?.kind === "edge" && state.selected.id === edge.id ? " is-selected" : "";
-      const stateClass = currSol?.edgeBlocked?.[edge.id] === "fb" ? " is-blocked"
-        : currSol?.edgeBlocked?.[edge.id] === "sb" ? " is-semi" : "";
+      const blockedValue = currSol?.edgeBlocked?.[edge.id];
+      const stateClass = blockedValue === "fb" ? " is-blocked"
+        : blockedValue === "sb" ? " is-semi"
+        : blockedValue === "full" ? " is-full" : "";
       const continuousFlow = currSol?.edgeFlows?.[edge.id] || null;
-      const continuousLabel = continuousFlow
-        ? computeEdgeLabelPosition(edge, 0)
-        : null;
+      const labelSpots = computeEdgeLabelSpots(edge);
+      const continuousLabel = continuousFlow ? labelSpots.primary : null;
       const simQueue = simSnap ? (simSnap.edges?.[edge.id]?.queue || []).length : 0;
       const simLabel = simSnap
-        ? computeEdgeLabelPosition(edge, continuousFlow ? 1 : 0)
+        ? (continuousFlow ? labelSpots.secondary : labelSpots.primary)
         : null;
       return `
         <g class="edge-group${activeClass}${selectedClass}${stateClass}" data-edge-id="${edge.id}">
@@ -1246,12 +1404,12 @@
           <path class="edge-line" d="${pathInfo.d}"></path>
           ${
             continuousFlow && continuousLabel
-              ? `<text class="edge-flow edge-flow-continuous" x="${continuousLabel.x}" y="${continuousLabel.y}" text-anchor="middle">${escapeHtml(continuousFlow.text)}</text>`
+              ? `<text class="edge-flow edge-flow-continuous" x="${continuousLabel.x}" y="${continuousLabel.y}" text-anchor="${continuousLabel.anchor}">${escapeHtml(continuousFlow.text)}</text>`
               : ""
           }
           ${
             simSnap && simLabel
-              ? `<text class="edge-flow edge-flow-sim" x="${simLabel.x}" y="${simLabel.y}" text-anchor="middle">${simQueue}</text>`
+              ? `<text class="edge-flow edge-flow-sim" x="${simLabel.x}" y="${simLabel.y}" text-anchor="${simLabel.anchor}">${simQueue}</text>`
               : ""
           }
         </g>
@@ -1369,23 +1527,30 @@
     const cx = (sx + tx) / 2 + px * offset;
     const cy = (sy + ty) / 2 + py * offset;
 
-    const labelX = (sx + 2 * cx + tx) / 4 + px * 8;
-    const labelY = (sy + 2 * cy + ty) / 4 + py * 8;
-
     return {
       d: "M " + sx + " " + sy + " Q " + cx + " " + cy + " " + tx + " " + ty,
-      labelX: labelX,
-      labelY: labelY,
+      midX: (sx + 2 * cx + tx) / 4,
+      midY: (sy + 2 * cy + ty) / 4,
+      dx: dx,
+      dy: dy,
     };
   }
 
-  function computeEdgeLabelPosition(edge, lane, verticalOffset) {
-    lane = lane || 0;
-    verticalOffset = verticalOffset || 0;
+  function computeEdgeLabelSpots(edge) {
     const pathInfo = computeEdgePath(edge);
+    const GAP = 4; // 文本与线的净距
+    if (Math.abs(pathInfo.dy) > Math.abs(pathInfo.dx)) {
+      // 陡边（>45°）：一左一右，文本垂直居中于中点
+      const y = pathInfo.midY + 4;
+      return {
+        primary: { x: pathInfo.midX - GAP, y, anchor: "end" },
+        secondary: { x: pathInfo.midX + GAP, y, anchor: "start" },
+      };
+    }
+    // 缓边：一上一下
     return {
-      x: pathInfo.labelX + lane * 13,
-      y: pathInfo.labelY - 8 + verticalOffset,
+      primary: { x: pathInfo.midX, y: pathInfo.midY - GAP, anchor: "middle" },
+      secondary: { x: pathInfo.midX, y: pathInfo.midY + 11 + GAP, anchor: "middle" },
     };
   }
 
@@ -1405,6 +1570,7 @@
       "add-Out": "放置 Out（输出）：点击空白处创建，点击已有节点仍可选中和拖动。",
       "add-S": "放置分流器 S：按 1 进入，点击空白处创建。",
       "add-C": "放置汇流器 C：按 2 进入，点击空白处创建。",
+      "add-U": "放置准入口 CU：按 5 进入，点击空白处创建（入 1 出 1，满速 g/5）。",
       edge: "连边模式：先点击起点，再点击终点；Esc 返回选择模式。",
     };
     return hints[mode] || "";
@@ -1422,6 +1588,60 @@
     const next = (state.counters[kind] ?? 0) + 1;
     state.counters[kind] = next;
     return `${kind}${next}`;
+  }
+
+  // ── 准入口（Control Unit）挡位 ────────────────────────────────
+
+  const CONTROL_PATTERN = /^CU([1-4])_(\d+)$/;
+
+  function controlGearOf(nodeId) {
+    const match = CONTROL_PATTERN.exec(nodeId);
+    return match ? Number(match[1]) : null;
+  }
+
+  function nextControlIndex(gear) {
+    let next = 0;
+    const pattern = new RegExp(`^CU${gear}_(\\d+)$`);
+    for (const node of state.graph.nodes) {
+      const match = pattern.exec(node.id);
+      if (match) next = Math.max(next, Number(match[1]) + 1);
+    }
+    return next;
+  }
+
+  function nextControlId(gear) {
+    return `CU${gear}_${nextControlIndex(gear)}`;
+  }
+
+  function setControlGear(nodeId, gear) {
+    if (!Number.isInteger(gear) || gear < 1 || gear > 4) return;
+    const node = state.graph.nodes.find((item) => item.id === nodeId);
+    const match = CONTROL_PATTERN.exec(nodeId);
+    if (!node || node.type !== "U" || !match) return;
+    const newId = `CU${gear}_${match[2]}`;
+    if (newId === nodeId) return;
+    if (state.graph.nodes.some((item) => item.id === newId)) return;
+    node.id = newId;
+    for (const edge of state.graph.edges) {
+      if (edge.from === nodeId) edge.from = newId;
+      if (edge.to === nodeId) edge.to = newId;
+    }
+    if (state.selected?.kind === "node" && state.selected.id === nodeId) {
+      state.selected = { kind: "node", id: newId };
+    }
+    rebuildSimulator(`准入口挡位改为 ${gear}/5（${newId}）。`);
+    render();
+  }
+
+  window._setControlGear = setControlGear;
+
+  function syncPaletteGear() {
+    for (const chip of els.paletteGearChips) {
+      chip.classList.toggle(
+        "is-active",
+        Number(chip.getAttribute("data-gear")) === state.controlGear
+      );
+    }
   }
 
   function buildCounters(graph) {
@@ -1521,6 +1741,46 @@
     rebuildSimulator("已清空为仅起点和终点。");
   }
 
+  // 共轭变换：In↔Out、S↔C，节点 id 仅替换前缀，边反向。
+  function conjugateGraph() {
+    const PREFIX_MAP = { In: "Out", Out: "In", S: "C", C: "S" };
+    const rename = new Map();
+    const used = new Set();
+    for (const n of state.graph.nodes) {
+      const m = n.id.match(/^([a-zA-Z]+)(.*)$/);
+      const newPrefix = PREFIX_MAP[n.type] ?? (m ? m[1] : n.id);
+      const rest = m ? m[2] : "";
+      let name = newPrefix + rest;
+      if (used.has(name)) {
+        let i = 1;
+        while (used.has(`${newPrefix}${i}`)) i++;
+        name = `${newPrefix}${i}`;
+      }
+      used.add(name);
+      rename.set(n.id, name);
+    }
+    const ng = {
+      nodes: state.graph.nodes.map((n) => ({
+        ...n,
+        id: rename.get(n.id),
+        type: PREFIX_MAP[n.type] ?? n.type,
+      })),
+      edges: state.graph.edges.map((e) => ({
+        id: e.id,
+        from: rename.get(e.to),
+        to: rename.get(e.from),
+      })),
+    };
+    state.graph = graphFromImported(ng);
+    state.counters = buildCounters(state.graph);
+    state.selected =
+      state.selected?.kind === "node" && rename.has(state.selected.id)
+        ? { kind: "node", id: rename.get(state.selected.id) }
+        : state.selected;
+    state.draftEdgeFrom = null;
+    rebuildSimulator("已共轭：In/Out、S/C 互换，边已反向。");
+  }
+
   function loadSavesFromStorage() {
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -1545,11 +1805,11 @@
     }
     for (const e of graph.edges) {
       const fromSlot = e.fromSlot ?? findFirstEmptySlot(
-        NODE_CAPACITY[_getNodeType(e.from, ng)].maxOut,
+        nodeCapacity(_getNodeType(e.from, ng)).maxOut,
         ng.edges.filter((c) => c.from === e.from).map((c) => c.fromSlot ?? 0)
       );
       const toSlot = e.toSlot ?? findFirstEmptySlot(
-        NODE_CAPACITY[_getNodeType(e.to, ng)].maxIn,
+        nodeCapacity(_getNodeType(e.to, ng)).maxIn,
         ng.edges.filter((c) => c.to === e.to).map((c) => c.toSlot ?? 0)
       );
       ng.edges.push({ id: e.id, from: e.from, to: e.to, fromSlot, toSlot });
@@ -1612,6 +1872,7 @@
   function inferWgType(id, deg) {
     if (id.startsWith("In")) return "In";
     if (id.startsWith("Out")) return "Out";
+    if (id.startsWith("CU")) return "U";
     if (id.startsWith("S")) return "S";
     if (id.startsWith("C")) return "C";
     // 非标准命名（无 In/Out/S/C 前缀）：按出入度推断
@@ -1754,11 +2015,11 @@
       const from = renameMap[e.from] ?? e.from;
       const to = renameMap[e.to] ?? e.to;
       const fromSlot = findFirstEmptySlot(
-        NODE_CAPACITY[getType(from)].maxOut,
+        nodeCapacity(getType(from)).maxOut,
         state.graph.edges.filter((c) => c.from === from).map((c) => c.fromSlot ?? 0)
       );
       const toSlot = findFirstEmptySlot(
-        NODE_CAPACITY[getType(to)].maxIn,
+        nodeCapacity(getType(to)).maxIn,
         state.graph.edges.filter((c) => c.to === to).map((c) => c.toSlot ?? 0)
       );
       return { id, from, to, fromSlot, toSlot };

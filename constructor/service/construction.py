@@ -45,6 +45,7 @@ def construct_fraction(
     exhaustion_pair_limit: int = DEFAULT_EXHAUSTION_PAIR_LIMIT,
     reduction_depth: int = 3,
     reduction_state_limit: int = 4096,
+    control_units: bool = True,
 ) -> ConstructionResult:
     """Construct and certify an exact graph for ``0 < p/q < 1``."""
     total_started = perf_counter()
@@ -65,6 +66,7 @@ def construct_fraction(
         search_range=search_range,
         depth=reduction_depth,
         state_limit=reduction_state_limit,
+        control_units=control_units,
     )
     planned = planner.plan(target)
 
