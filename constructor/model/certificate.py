@@ -9,7 +9,7 @@ from enum import Enum
 from fractions import Fraction
 from time import perf_counter
 
-from graph import Edge, Graph, control_gear
+from graph import Edge, Graph, control_denominator, control_gear
 
 logger = logging.getLogger(__name__)
 
@@ -228,9 +228,13 @@ def _is_fixed_candidate(edge: Edge) -> bool:
 
 
 def _edge_capacity(edge: Edge) -> Fraction:
-    """Return an edge's full speed: ``gear/5`` into a control unit, else 1."""
+    """Return an edge's full speed: ``gear/denominator`` into a control unit."""
     gear = control_gear(edge[1])
-    return Fraction(gear, 5) if gear is not None else Fraction(1)
+    if gear is None:
+        return Fraction(1)
+    denominator = control_denominator(edge[1])
+    assert denominator is not None
+    return Fraction(gear, denominator)
 
 
 def _equation_rows(

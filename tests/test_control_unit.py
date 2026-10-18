@@ -7,23 +7,38 @@ from constructor import boundary_flow, construct_fraction
 from constructor.leaves.unit import control_certificate
 from constructor.model.certificate import EdgeState, FlowCertificate
 from constructor.verification.karzanov import crosscheck_karzanov
-from graph import NodeKind, control_gear
-from graph import Graph
+from graph import Graph, NodeKind, control_denominator, control_gear, control_mode
 from simulator import TopoFlowSimulator, simulate_frames
+from solver import solve
 
 
 class ControlUnitNodeTests(unittest.TestCase):
     def test_node_kind_and_gear_parsing(self) -> None:
         for gear in range(1, 5):
-            node = f"CU{gear}_7"
-            self.assertIs(NodeKind.from_node(node), getattr(NodeKind, f"CU{gear}"))
+            for prefix in ("CU", "ICU"):
+                node = f"{prefix}{gear}_7"
+                self.assertIs(NodeKind.from_node(node), getattr(NodeKind, f"{prefix}{gear}"))
+                self.assertEqual(NodeKind.from_node(node).degrees, (1, 1))
+                self.assertEqual(control_gear(node), gear)
+                self.assertEqual(control_mode(node), "item")
+                self.assertEqual(control_denominator(node), 5)
+        for gear in range(1, 10):
+            node = f"PCU{gear}_7"
+            self.assertIs(NodeKind.from_node(node), getattr(NodeKind, f"PCU{gear}"))
             self.assertEqual(NodeKind.from_node(node).degrees, (1, 1))
             self.assertEqual(control_gear(node), gear)
+            self.assertEqual(control_mode(node), "pipe")
+            self.assertEqual(control_denominator(node), 20)
         for plain in ("In", "Out", "S2_0", "C3_12", "U1_0"):
             self.assertIsNone(control_gear(plain))
+            self.assertIsNone(control_mode(plain))
 
     def test_invalid_control_unit_names_are_rejected(self) -> None:
-        for bad in ("CU0_0", "CU5_0", "CU_0", "CU1a_0", "CU1"):
+        for bad in (
+            "CU0_0", "CU5_0", "CU_0", "CU1a_0", "CU1",
+            "ICU0_0", "ICU5_0", "ICU_0",
+            "PCU0_0", "PCU10_0", "PCU_0",
+        ):
             self.assertIsNone(control_gear(bad))
             with self.assertRaises(ValueError):
                 NodeKind.from_node(bad)
@@ -42,6 +57,34 @@ class ControlUnitNodeTests(unittest.TestCase):
             result = crosscheck_karzanov(control_certificate(gear), Fraction(gear, 5))
             self.assertTrue(result.exact)
             self.assertEqual(result.flow, Fraction(gear, 5))
+
+    def test_pipe_control_unit_is_exact_and_full_rank(self) -> None:
+        for gear in range(1, 10):
+            with self.subTest(gear=gear):
+                node = f"PCU{gear}_0"
+                value = Fraction(gear, 20)
+                certificate = FlowCertificate(
+                    (("In", node), (node, "Out")),
+                    (value, value),
+                    (EdgeState.FULL, EdgeState.EMPTY),
+                    frozenset({0}),
+                )
+                self.assertEqual(certificate.validation_errors(), ())
+                check = certificate.check()
+                self.assertTrue(check.valid, check.errors)
+                self.assertTrue(check.full_rank)
+                result = crosscheck_karzanov(certificate, value)
+                self.assertTrue(result.exact)
+                self.assertEqual(result.flow, value)
+
+    def test_pipe_control_unit_flow_model_and_rates(self) -> None:
+        for gear in range(1, 10):
+            with self.subTest(gear=gear):
+                node = f"PCU{gear}_0"
+                result = solve(Graph.from_edges([("In", node), (node, "Out")]))
+                self.assertEqual(result.status, "Optimal")
+                self.assertAlmostEqual(result.edges[0].flow, gear / 20, places=6)
+                self.assertAlmostEqual(result.edges[1].flow, gear / 20, places=6)
 
     def test_flow_above_control_unit_speed_is_rejected(self) -> None:
         node = "CU2_0"

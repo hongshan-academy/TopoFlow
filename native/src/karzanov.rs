@@ -58,10 +58,12 @@ fn build_instance(graph: &GraphData) -> Result<Instance, String> {
 
     let mut base = Vec::new();
     for (edge_id, edge) in graph.edges.iter().enumerate() {
-        // A control unit throttles the full speed of its incoming edge: a
-        // `CU{g}_{i}` node lowers that edge's capacity from 1 to `g / 5`.
+        // A control unit throttles the full speed of its incoming edge:
+        // item CUs (`CU`/`ICU`) use `g / 5`, pipe CUs (`PCU`) use `g / 20`.
         let capacity = match graph.kinds[edge.v] {
-            Kind::ControlUnit { gear } => rat_ratio(gear as i64, 5),
+            Kind::ControlUnit { gear, denominator } => {
+                rat_ratio(gear as i64, denominator as i64)
+            }
             _ => rat(1),
         };
         base.push(Contract {

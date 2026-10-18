@@ -101,6 +101,7 @@
     backendBusy: false,
     topologyLayout: null,
     solverModel: "rust-rank-smt",
+    controlMode: "item",
     controlGear: 1,
     // 离散仿真
     simFrames: [],
@@ -137,7 +138,8 @@
     saveList: document.getElementById("save-list"),
     graphStats: document.getElementById("graph-stats"),
     toolButtons: [...document.querySelectorAll("[data-mode-button]")],
-    paletteGearChips: [...document.querySelectorAll("#palette-gear-chips .gear-chip")],
+    paletteModeChips: document.getElementById("palette-mode-chips"),
+    paletteGearChips: document.getElementById("palette-gear-chips"),
     importJsonInput: document.getElementById("import-json-input"),
     importBtn: document.getElementById("import-btn"),
     importStatus: document.getElementById("import-status"),
@@ -760,6 +762,7 @@
     loadSavesFromStorage();
     rebuildSimulator("已载入示例图。");
     bindEvents();
+    renderPaletteGears();
     render();
     loadSolvers().then(() => applySolverModel());
   }
@@ -832,12 +835,19 @@
       });
     }
 
-    for (const chip of els.paletteGearChips) {
-      chip.addEventListener("click", () => {
-        state.controlGear = Number(chip.getAttribute("data-gear"));
-        syncPaletteGear();
-      });
-    }
+    els.paletteModeChips.addEventListener("click", (event) => {
+      const chip = event.target.closest("[data-control-mode]");
+      if (!chip) return;
+      state.controlMode = chip.getAttribute("data-control-mode") === "pipe" ? "pipe" : "item";
+      state.controlGear = clamp(state.controlGear, 1, controlMaxGear(state.controlMode));
+      renderPaletteGears();
+    });
+    els.paletteGearChips.addEventListener("click", (event) => {
+      const chip = event.target.closest("[data-gear]");
+      if (!chip) return;
+      state.controlGear = Number(chip.getAttribute("data-gear"));
+      syncPaletteGear();
+    });
 
     els.svg.addEventListener("pointerdown", onSvgPointerDown);
     els.svg.addEventListener("pointermove", onSvgPointerMove);
@@ -1101,7 +1111,7 @@
 
   function addNode(type, point) {
     const node = {
-      id: type === "U" ? nextControlId(state.controlGear) : nextId(type),
+      id: type === "U" ? nextControlId(state.controlMode, state.controlGear) : nextId(type),
       type,
       x: point.x,
       y: point.y,
@@ -1262,14 +1272,21 @@
         ["入边 / 出边", `${incoming} / ${outgoing}`],
       ];
       if (node.type === "U") {
-        const current = controlGearOf(node.id) ?? 1;
-        const chips = [1, 2, 3, 4]
+        const info = controlInfoOf(node.id) || { mode: "item", gear: 1, index: 0 };
+        const denominator = controlDenominator(info.mode);
+        const modeChips = ["item", "pipe"]
           .map(
-            (g) =>
-              `<button type="button" class="gear-chip${g === current ? " is-active" : ""}" data-gear="${g}" onclick="window._setControlGear('${escapeHtml(node.id)}', ${g})">${g}/5</button>`
+            (mode) =>
+              `<button type="button" class="gear-chip${mode === info.mode ? " is-active" : ""}" data-control-mode="${mode}" onclick="window._setControlMode('${escapeHtml(node.id)}', '${mode}')">${mode === "pipe" ? "管道" : "物品"}</button>`
           )
           .join("");
-        gearSection = `<section class="object-status-section"><h3>准入口</h3><div class="object-status-row"><span>挡位</span><span class="gear-chips">${chips}</span></div></section>`;
+        const chips = Array.from({ length: controlMaxGear(info.mode) }, (_, index) => index + 1)
+          .map(
+            (g) =>
+              `<button type="button" class="gear-chip${g === info.gear ? " is-active" : ""}" data-gear="${g}" title="${6 * g}/m" onclick="window._setControlGear('${escapeHtml(node.id)}', ${g})">${g}/${denominator}</button>`
+          )
+          .join("");
+        gearSection = `<section class="object-status-section"><h3>准入口</h3><div class="object-status-row"><span>模式</span><span class="gear-chips">${modeChips}</span></div><div class="object-status-row"><span>挡位</span><span class="gear-chips">${chips}</span></div></section>`;
       }
       solverRows = nodeFlow
         ? [["流量", nodeFlow.text]]
@@ -1570,7 +1587,7 @@
       "add-Out": "放置 Out（输出）：点击空白处创建，点击已有节点仍可选中和拖动。",
       "add-S": "放置分流器 S：按 1 进入，点击空白处创建。",
       "add-C": "放置汇流器 C：按 2 进入，点击空白处创建。",
-      "add-U": "放置准入口 CU：按 5 进入，点击空白处创建（入 1 出 1，满速 g/5）。",
+      "add-U": "放置准入口：按 5 进入，点击空白处创建；挡位支持物品 ICU（g/5）和管道 PCU（g/20）。",
       edge: "连边模式：先点击起点，再点击终点；Esc 返回选择模式。",
     };
     return hints[mode] || "";
@@ -1592,16 +1609,38 @@
 
   // ── 准入口（Control Unit）挡位 ────────────────────────────────
 
-  const CONTROL_PATTERN = /^CU([1-4])_(\d+)$/;
+  const CONTROL_PATTERN = /^(CU|ICU|PCU)(\d+)_(\d+)$/;
 
-  function controlGearOf(nodeId) {
-    const match = CONTROL_PATTERN.exec(nodeId);
-    return match ? Number(match[1]) : null;
+  function controlDenominator(mode) {
+    return mode === "pipe" ? 20 : 5;
   }
 
-  function nextControlIndex(gear) {
+  function controlMaxGear(mode) {
+    return mode === "pipe" ? 9 : 4;
+  }
+
+  function controlPrefix(mode) {
+    return mode === "pipe" ? "PCU" : "ICU";
+  }
+
+  function controlInfoOf(nodeId) {
+    const match = CONTROL_PATTERN.exec(nodeId);
+    if (!match) return null;
+    const prefix = match[1];
+    const gear = Number(match[2]);
+    const mode = prefix === "PCU" ? "pipe" : "item";
+    if (gear < 1 || gear > controlMaxGear(mode)) return null;
+    return { prefix, mode, gear, index: Number(match[3]) };
+  }
+
+  function controlGearOf(nodeId) {
+    return controlInfoOf(nodeId)?.gear ?? null;
+  }
+
+  function nextControlIndex(mode, gear) {
     let next = 0;
-    const pattern = new RegExp(`^CU${gear}_(\\d+)$`);
+    const prefixes = mode === "pipe" ? ["PCU"] : ["CU", "ICU"];
+    const pattern = new RegExp(`^(?:${prefixes.join("|")})${gear}_(\\d+)$`);
     for (const node of state.graph.nodes) {
       const match = pattern.exec(node.id);
       if (match) next = Math.max(next, Number(match[1]) + 1);
@@ -1609,18 +1648,15 @@
     return next;
   }
 
-  function nextControlId(gear) {
-    return `CU${gear}_${nextControlIndex(gear)}`;
+  function nextControlId(mode, gear) {
+    return `${controlPrefix(mode)}${gear}_${nextControlIndex(mode, gear)}`;
   }
 
-  function setControlGear(nodeId, gear) {
-    if (!Number.isInteger(gear) || gear < 1 || gear > 4) return;
+  function renameNodeId(nodeId, newId, message) {
     const node = state.graph.nodes.find((item) => item.id === nodeId);
-    const match = CONTROL_PATTERN.exec(nodeId);
-    if (!node || node.type !== "U" || !match) return;
-    const newId = `CU${gear}_${match[2]}`;
-    if (newId === nodeId) return;
-    if (state.graph.nodes.some((item) => item.id === newId)) return;
+    if (!node || node.type !== "U") return false;
+    if (newId === nodeId) return true;
+    if (state.graph.nodes.some((item) => item.id === newId)) return false;
     node.id = newId;
     for (const edge of state.graph.edges) {
       if (edge.from === nodeId) edge.from = newId;
@@ -1629,18 +1665,68 @@
     if (state.selected?.kind === "node" && state.selected.id === nodeId) {
       state.selected = { kind: "node", id: newId };
     }
-    rebuildSimulator(`准入口挡位改为 ${gear}/5（${newId}）。`);
+    rebuildSimulator(message);
     render();
+    return true;
+  }
+
+  function setControlGear(nodeId, gear) {
+    const info = controlInfoOf(nodeId);
+    if (!info || !Number.isInteger(gear) || gear < 1 || gear > controlMaxGear(info.mode)) return;
+    const newId = `${info.prefix}${gear}_${info.index}`;
+    renameNodeId(
+      nodeId,
+      newId,
+      `准入口挡位改为 ${gear}/${controlDenominator(info.mode)}（${newId}）。`
+    );
+  }
+
+  function setControlMode(nodeId, mode) {
+    const info = controlInfoOf(nodeId);
+    if (!info) return;
+    const nextMode = mode === "pipe" ? "pipe" : "item";
+    const gear = clamp(info.gear, 1, controlMaxGear(nextMode));
+    const newId = `${controlPrefix(nextMode)}${gear}_${info.index}`;
+    renameNodeId(
+      nodeId,
+      newId,
+      `准入口模式改为 ${nextMode === "pipe" ? "管道" : "物品"}（${newId}）。`
+    );
   }
 
   window._setControlGear = setControlGear;
+  window._setControlMode = setControlMode;
+
+  function renderPaletteGears() {
+    if (!els.paletteGearChips) return;
+    const maxGear = controlMaxGear(state.controlMode);
+    const denominator = controlDenominator(state.controlMode);
+    state.controlGear = clamp(state.controlGear, 1, maxGear);
+    els.paletteGearChips.innerHTML = Array.from({ length: maxGear }, (_, index) => index + 1)
+      .map(
+        (g) =>
+          `<button type="button" class="gear-chip" data-gear="${g}" title="${6 * g}/m">${g}/${denominator}</button>`
+      )
+      .join("");
+    syncPaletteGear();
+  }
 
   function syncPaletteGear() {
-    for (const chip of els.paletteGearChips) {
-      chip.classList.toggle(
-        "is-active",
-        Number(chip.getAttribute("data-gear")) === state.controlGear
-      );
+    if (els.paletteModeChips) {
+      for (const chip of els.paletteModeChips.querySelectorAll("[data-control-mode]")) {
+        chip.classList.toggle(
+          "is-active",
+          chip.getAttribute("data-control-mode") === state.controlMode
+        );
+      }
+    }
+    if (els.paletteGearChips) {
+      for (const chip of els.paletteGearChips.querySelectorAll("[data-gear]")) {
+        chip.classList.toggle(
+          "is-active",
+          Number(chip.getAttribute("data-gear")) === state.controlGear
+        );
+      }
     }
   }
 
@@ -1872,7 +1958,7 @@
   function inferWgType(id, deg) {
     if (id.startsWith("In")) return "In";
     if (id.startsWith("Out")) return "Out";
-    if (id.startsWith("CU")) return "U";
+    if (/^(CU|ICU|PCU)/.test(id)) return "U";
     if (id.startsWith("S")) return "S";
     if (id.startsWith("C")) return "C";
     // 非标准命名（无 In/Out/S/C 前缀）：按出入度推断

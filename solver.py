@@ -7,7 +7,7 @@ from result import (
     EdgeResult,
     SolverResult,
 )
-from graph import Graph, control_gear
+from graph import Graph, control_denominator, control_gear
 
 from ilpbridge import FEASIBLE, INFEASIBLE, OPTIMAL, UNKNOWN, Model, Solver, _LinearExpr
 
@@ -259,25 +259,31 @@ class FlowModel:
                     + is_unblocked[outgoing_edge]
                 )
 
-        # Control units throttle their single incoming edge to ``[0, gear/5]``
-        # and only ever propagate blockage from downstream to upstream.
+        # Control units throttle their single incoming edge to
+        # ``[0, gear/denominator]`` and only ever propagate blockage from
+        # downstream to upstream. Item CUs use denominator 5; pipe CUs use 20.
         for node in nodes:
             gear = control_gear(node)
             if gear is None:
                 continue
+            denominator = control_denominator(node)
+            assert denominator is not None
             in_edge = in_edges[node][0]
             out_edge = out_edges[node][0]
 
-            # Capacity: the incoming edge's full speed is gear/5.
-            model.add(v[in_edge] * 5 <= gear)
+            # Capacity: the incoming edge's full speed is gear/denominator.
+            model.add(v[in_edge] * denominator <= gear)
 
             # Downstream blocked => upstream blocked (equivalently, upstream
             # flowing => downstream flowing).
             model.add(is_blocked[out_edge] <= is_blocked[in_edge])
             model.add(is_unblocked[in_edge] <= is_unblocked[out_edge])
 
-            # Upstream blocked => incoming flow saturates at gear/5.
-            model.add(v[in_edge] * 5 >= gear - 10 + 10 * is_blocked[in_edge])
+            # Upstream blocked => incoming flow saturates at gear/denominator.
+            model.add(
+                v[in_edge] * denominator
+                >= gear - 2 * denominator + 2 * denominator * is_blocked[in_edge]
+            )
 
         self.model = model
         self.v = v
