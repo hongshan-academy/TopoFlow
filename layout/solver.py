@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Minimal CP-SAT solver for Endfield splitters and mergers only.
+"""Minimal grid solver for splitters, mergers and single-in/out control units.
 
 Accepted facilities are 1x1 ``logi`` nodes.  The program keeps the original
 ``mach`` / ``belt`` input schema and writes an editor-compatible solution JSON,
@@ -165,10 +165,10 @@ def parse_problem(raw: dict[str, object], fallback_name: str = "logistics") -> P
             for kind in (1, 2)
             if ports[-kind] or ports[kind]
         ]
-        if len(shapes) != 1 or shapes[0] not in ((3, 1), (1, 3)):
+        if len(shapes) != 1 or shapes[0] not in ((3, 1), (1, 3), (1, 1)):
             raise ValueError(
                 f"mach[{facility_id}] must be one belt/pipe splitter (1 in, 3 out) "
-                "or merger (3 in, 1 out)"
+                "or merger (3 in, 1 out) or control unit (1 in, 1 out)"
             )
         facilities.append(Facility(ports=ports))
 

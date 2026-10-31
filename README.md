@@ -16,6 +16,10 @@
 - **准入口（Control Unit / CU）**：物品模式使用 `ICU1..ICU4`（兼容旧 `CU1..CU4`），容量 `g/5`，满速 30 时对应 6/12/18/24；管道模式使用 `PCU1..PCU9`，容量 `g/20`，满速 120 时对应 6/12/18/24/30/36/42/48/54。离散仿真中，首个收到的物品开启 5 tick 窗口，窗口内最多接收 `g` 件；PCU 暂不参与离散仿真，仿真支持等待 `topo-layout`。规划器默认把物品 `CU(g)` 用作加数、减数或被缩放的内层模块，明显减小 `1/5` 族的图（如 `9/35 = CU(2) - U(7)`、`1/25 = CU(1)/5`）。可通过 `control_units=False` / `--no-control` 关闭。手动编辑时，左栏「准入口」按钮下方用「物品/管道」模式与对应挡位选择放置；右栏「状态栏 → 准入口」可切换模式和挡位（节点名同步为 `ICU`/`PCU`/`CU`）。三种流量引擎（`Karzanov`、`rank-SMT`、`MILP`）与构造器/秩检查都识别两种容量与阻塞传播；构造器仍只生成物品 CU。
 - **标准分流模块**：按 `p:q` 二分构造分流拓扑。
 - **物理布局**：内置 CP-SAT 布局求解器（OR-Tools）搜索最小可行网格并可视化（`layout/`）。
+  布局支持 `CU1`–`CU4`：按 1×1 单入单出设施处理，默认上侧输入、下侧输出，
+  可旋转四个方向。结果保留 `topoflow_node_type` 和 `control_gear`；自动类型推断
+  不会改变 CU 档位。布局编辑器支持显示 CU、端口和数量。这里的端口模板是
+  TopoFlow 内部几何约定，档位的流量语义由已有流量引擎和仿真器处理。
 
 ## 求解架构
 
@@ -117,6 +121,10 @@ uv run uvicorn server:app --port 8081 --host 127.0.0.1
 
 ## API
 
+物理布局结果支持导出 EnKA Beta 蓝图，主页面和布局编辑器均提供复制/下载按钮。
+包含 CU 时需填写 EnKA 物品 ID；管道 CU 还需明确速率基准。
+接口、命令行与验证范围见 [EnKA 导出说明](layout/enkad-export.md)。
+
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/config` | 仿真配置（最大帧数） |
@@ -126,6 +134,7 @@ uv run uvicorn server:app --port 8081 --host 127.0.0.1
 | POST | `/api/ratio-split` | 标准分流模块生成 |
 | POST | `/api/limit-module` | 标准限流计算（任意 `p/q`，可选 `control_units`，`constructor/`） |
 | POST | `/api/topoflow-layout` | 物理布局（NDJSON 流式进度） |
+| POST | `/api/export/enkad` | 从物理布局导出 EnKA 蓝图、端点对应表和验证提示 |
 
 `rank-smt` 与 `karzanov` 按节点度数识别边界：每个 In 为 `(0, 1)`，每个 Out 为 `(1, 0)`。
 同一请求可包含多个弱连通的输入输出分量；每个含边分量均需至少一个 In 和一个 Out。

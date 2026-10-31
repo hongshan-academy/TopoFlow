@@ -547,6 +547,11 @@
     showToast("已导出物理布局", "info");
   }
 
+  document.getElementById("enkad-copy-btn").addEventListener("click", () =>
+    window.exportEnkad(state.topologyLayout?.solution, true).catch(error => showToast(error.message, "error")));
+  document.getElementById("enkad-download-btn").addEventListener("click", () =>
+    window.exportEnkad(state.topologyLayout?.solution, false).catch(error => showToast(error.message, "error")));
+
   /** 打开文件选择，导入物理布局。 */
   function onLayoutImport() {
     els.layoutImportFile.value = "";

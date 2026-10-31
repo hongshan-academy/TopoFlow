@@ -27,14 +27,19 @@ LAYOUT_REQUEST_SCHEMA = "topoflow-logistics-layout/v1"
 # GA/editor exports may append a numeric uniqueness suffix, for example
 # ``C2_0__45131``.  The suffix is identity metadata only; the first capture
 # group still determines the facility family and therefore its degree rules.
-NODE_PATTERN = re.compile(r"^(S2|S3|C2|C3)_\d+(?:__\d+)?$")
+NODE_PATTERN = re.compile(r"^(S2|S3|C2|C3|CU[1-4])_\d+(?:__\d+)?$")
 EXPECTED_DEGREES = {
     "S2": (1, 2),
     "S3": (1, 3),
     "C2": (2, 1),
     "C3": (3, 1),
+    "CU1": (1, 1),
+    "CU2": (1, 1),
+    "CU3": (1, 1),
+    "CU4": (1, 1),
 }
-FAMILY_BY_DEGREE = {degree: family for family, degree in EXPECTED_DEGREES.items()}
+FAMILY_BY_DEGREE = {degree: family for family, degree in EXPECTED_DEGREES.items()
+                    if not family.startswith("CU")}
 TRANSPORT_KINDS = {"belt": 1, "pipe": 2}
 TERMINAL_DIRECTIONS = {"bottom": 0, "right": 1, "top": 2, "left": 3}
 LayoutHintCallback = Callable[[dict[str, object]], None]
@@ -206,7 +211,7 @@ def _node_family(node: str) -> str:
     if match is None:
         raise ValueError(
             f"unsupported TopoFlow node {node!r}; expected In, Out, "
-            "S2_<n>, S3_<n>, C2_<n>, or C3_<n>, optionally followed by __<n>"
+            "S2_<n>, S3_<n>, C2_<n>, C3_<n>, or CU1..CU4_<n>, optionally followed by __<n>"
         )
     return match.group(1)
 
@@ -242,6 +247,13 @@ def _validate_topology(
         declared_family = _node_family(node)
         expected = EXPECTED_DEGREES[declared_family]
         actual = (degrees[node][0], degrees[node][1])
+        # Degree alone cannot recover a CU's gear. Never reinterpret it as S/C,
+        # even when automatic degree-based type repair is requested.
+        if declared_family.startswith("CU"):
+            if actual != expected:
+                raise ValueError(f"{node} must have degree {expected}, got {actual}")
+            families[node] = declared_family
+            continue
         inferred_family = FAMILY_BY_DEGREE.get(actual)
         if inferred_family is None:
             raise ValueError(
@@ -285,6 +297,13 @@ def _validate_topology(
 def _facility_for(family: str, kind: int) -> dict[str, object]:
     positive = str(kind)
     negative = str(-kind)
+    if family in ("CU1", "CU2", "CU3", "CU4"):
+        return {
+            "type": "logi",
+            "size": [1, 1],
+            positive: [[2, 0]],
+            negative: [[0, 0]],
+        }
     if family.startswith("S"):
         return {
             "type": "logi",
@@ -719,6 +738,8 @@ def enrich_solution(
         node = facility_to_node[facility_id]
         machine["topoflow_node_id"] = node
         machine["topoflow_node_type"] = adapted.node_families[node]
+        if adapted.node_families[node].startswith("CU"):
+            machine["control_gear"] = int(adapted.node_families[node][2:])
 
     used_ports: dict[tuple[int, int], set[int]] = {}
     for belt, edge in zip(belts, adapted.internal_edges):
