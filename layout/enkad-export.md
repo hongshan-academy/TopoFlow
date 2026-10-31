@@ -23,8 +23,9 @@ Content-Type: application/json
 
 上面的 solution 仅展示请求形状，需替换成实际求解结果。一个无需求解器的几何
 输入示例在 `examples/enkad-cu2-layout.json`：左输入、CU2、右输出。
-CU 需要配置 `control_items: {"CU2_0": <真实物品ID>}`。
-`item_id` 可作为所有 CU 的共同默认物品；逐节点配置优先。
+准入口需要配置 `control_items: {"CU2_0": <真实物品/流体ID>}`；`ICU`/`CU`
+用于物品带，`PCU` 用于管道。`item_id` 可作为所有准入口的共同默认物品；
+逐节点配置优先。
 物品编号必须由调用者从当前 EnKA 目录确认，接口不能校验它代表什么。
 
 响应字段：
@@ -48,8 +49,8 @@ python -m layout.enkad_export examples/enkad-cu2-layout.json -o blueprint.txt --
 
 第二条命令中的尖括号内容是占位符，应替换成整数。会同时写出
 `blueprint.manifest.json`，包含原生布局、端点和验证提示。
-不同 CU 使用不同物品时，使用 Python `export_layout(..., control_items=...)`
-或 HTTP 接口。管道 CU 必须明确设置 `full_rate_per_minute`；CLI 用
+不同准入口使用不同物品时，使用 Python `export_layout(..., control_items=...)`
+或 HTTP 接口。`PCU` 必须明确设置 `full_rate_per_minute`（通常 120/m）；CLI 用
 `--full-rate-per-minute`。
 
 ## 转换约定
@@ -60,8 +61,8 @@ python -m layout.enkad_export examples/enkad-cu2-layout.json -o blueprint.txt --
 - 导出前检查相邻设施的全部物理端口；若闲置端口会在 EnKA 中产生原路线之外的
   直连，则拒绝导出并提示相关设施，需要调整位置或朝向后重新求解。
 - S/C 设施以布局结果的 `topoflow_node_type` 为准，支持按度数修正类型后保留
-  原节点 ID；CU 类型和档位仍必须与节点 ID 一致。
-- S/CU 旋转为 `(180 - 90*rot) % 360`；C 旋转为 `(-90*rot) % 360`。
+  原节点 ID；准入口类型和档位仍必须与节点 ID 一致。
+- S/准入口旋转为 `(180 - 90*rot) % 360`；C 旋转为 `(-90*rot) % 360`。
 - 正交直线交叉生成显式桥，分割两条路线；相邻设施/桥直接连接，不插入空格。
 - 外部 anchor 若存在，沿端口方向延伸至边界外一格；无 anchor 时只记录设施
   外侧一格的待接端点。若 anchor 不与端口对齐或线路被占用则拒绝导出。
@@ -76,18 +77,21 @@ python -m layout.enkad_export examples/enkad-cu2-layout.json -o blueprint.txt --
 
 这不是完整目录，网站升级后需再次核实。当前不支持混合运输图或非 1×1 设施。
 
-## CU 和验证边界
+## 准入口和验证边界
 
 见 [控制口核对记录](enkad-control-port-notes.md)。物品带缺省满速基准为 30/m，
-CU1..CU4 的 value 为 12/24/36/48；输出物品写入 port_index=0。
+`ICU`/`CU1..CU4` 的 value 为 12/24/36/48；管道 `PCU1..PCU9` 使用 120/m 基准和
+`g/20` 容量，value 为 12/24/36/48/60/72/84/96/108。输出物品写入 port_index=0。
 value=0 表示默认满速，counter 缺省 0 表示无累计数量截止。
 
-目前已测试原生字段解码、旋转、图层、端口、路径重建及非法几何拒绝。
-尚未验证浏览器实际粘贴、EnKA 仿真吞吐或 CU 的五 tick 窗口等价性。
-网页几何预览成功和蓝图解码成功不能代替实际仿真。
+目前已测试原生字段解码、旋转、图层、端口、路径重建及非法几何拒绝，并在
+EnKA Beta 中验证了 `ICU`/`PCU` 的导入与速率显示。尚未验证浏览器实际粘贴后的
+长期仿真吞吐或准入口的五 tick 窗口等价性。网页几何预览成功和蓝图解码成功不能
+代替实际仿真。
 
 ```text
 python -m pytest tests/test_enkad_export.py tests/test_layout_control_unit.py
 ```
 
-HTTP 测试需要可导入服务器及其依赖；原生布局测试需要已构建的 Z3 扩展。
+HTTP 测试需要可导入服务器及其依赖；`test_native_cu_layout` 需要已构建的
+`topoflow_native` 扩展，缺失时会跳过。

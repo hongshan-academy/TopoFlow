@@ -54,9 +54,11 @@ def assignment(m, direction, output=False, kind=1):
     return {'cell': m['pos'], 'dir': direction, 'kind': -kind if output else kind}
 
 
-def single(gear=2, rot=0, transport='belt'):
+def single(gear=2, rot=0, transport='belt', prefix=None):
     kind = 1 if transport == 'belt' else 2
-    m = machine(0, f'CU{gear}', [1, 1], rot)
+    if prefix is None:
+        prefix = 'PCU' if transport == 'pipe' else 'CU'
+    m = machine(0, f'{prefix}{gear}', [1, 1], rot)
     sides = ['bottom', 'right', 'top', 'left']
     return {'n': 3, 'm': 3, 'machs': [m], 'belts': [], 'topoflow': {
         'transport': transport, 'external_connections': [
@@ -96,15 +98,44 @@ def test_cu_native_fields_and_rotations(gear, rot):
     assert -1 in coordinates
 
 
-def test_pipe_cu_requires_explicit_baseline_and_uses_pipe_layer():
+def test_pipe_control_requires_explicit_baseline_and_uses_pipe_layer():
     with pytest.raises(ValueError, match='explicit'):
         export_layout(single(transport='pipe'), item_id=123)
-    result = export_layout(single(transport='pipe'), item_id=123, full_rate_per_minute=120)
+    result = export_layout(single(transport='pipe'), item_id=123,
+                           full_rate_per_minute=120)
     layer = result['layout']['layers'][0]
     assert layer['layer_tag'] == 5
     assert layer['entities'][0]['entity_id'] == 41
-    assert layer['entities'][0]['building']['value'] == 96
+    # PCU2 = 120 * 2 / 20 = 12/min -> value 24 (not 96).
+    assert layer['entities'][0]['building']['value'] == 24
     assert all(e['entity_id'] == 42 for e in layer['entities'][1:])
+
+
+def test_icu_uses_item_layer_and_rate():
+    result = export_layout(single(gear=2, prefix='ICU'), item_id=123)
+    layer = result['layout']['layers'][0]
+    assert layer['layer_tag'] == 3
+    assert layer['entities'][0]['entity_id'] == 37
+    assert layer['entities'][0]['building']['value'] == 24
+
+
+def test_pcu_nine_rate():
+    result = export_layout(single(gear=9, transport='pipe', prefix='PCU'),
+                           item_id=123, full_rate_per_minute=120)
+    entity = result['layout']['layers'][0]['entities'][0]
+    # PCU9 = 120 * 9 / 20 = 54/min -> value 108.
+    assert entity['building']['value'] == 108
+
+
+@pytest.mark.parametrize('prefix,transport,match', [
+    ('PCU', 'belt', 'pipe control unit requires pipe transport'),
+    ('ICU', 'pipe', 'item control unit requires belt transport'),
+    ('CU', 'pipe', 'item control unit requires belt transport'),
+])
+def test_control_unit_transport_mismatch(prefix, transport, match):
+    with pytest.raises(ValueError, match=match):
+        export_layout(single(gear=2, transport=transport, prefix=prefix), item_id=123,
+                      full_rate_per_minute=120)
 
 
 def crossing():
@@ -248,7 +279,7 @@ def test_export_uses_adapter_inferred_types_and_retains_original_ids(names):
     assert result['manifest']['facilities'] == {names[0]: 1, names[1]: 2}
 
 
-@pytest.mark.parametrize('family', ['CU1', 'S2', 'C2'])
+@pytest.mark.parametrize('family', ['CU1', 'ICU2', 'PCU2', 'S2', 'C2'])
 def test_cu_identity_cannot_be_repaired_to_another_family(family):
     s = single()
     s['machs'][0]['topoflow_node_type'] = family
@@ -305,7 +336,7 @@ def test_export_ui_javascript_syntax():
 def test_invalid_settings_rejected():
     with pytest.raises(ValueError, match='item_id'):
         export_layout(single())
-    with pytest.raises(ValueError, match='unknown CU'):
+    with pytest.raises(ValueError, match='unknown control-unit'):
         export_layout(single(), item_id=123, control_items={'CU1_99': 123})
     for value in [0, -30, 'nan', 31, 1000]:
         with pytest.raises(ValueError):

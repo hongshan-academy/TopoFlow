@@ -6,8 +6,8 @@ import pytest
 from layout import adapter
 
 
-def single_cu(gear, suffix=""):
-    node = f"CU{gear}_0{suffix}"
+def single_cu(gear, suffix="", prefix="CU"):
+    node = f"{prefix}{gear}_0{suffix}"
     return {"nodes": ["In", node, "Out"],
             "edges": [["In", node], [node, "Out"]]}
 
@@ -16,15 +16,20 @@ def single_cu(gear, suffix=""):
 @pytest.mark.parametrize("infer", [False, True])
 @pytest.mark.parametrize("transport,kind", [("belt", 1), ("pipe", 2)])
 def test_cu_adaptation_preserves_gear(gear, infer, transport, kind):
-    graph = single_cu(gear, "__123")
+    prefix = "PCU" if transport == "pipe" else "ICU"
+    graph = single_cu(gear, "__123", prefix=prefix)
     graph["inferNodeTypesFromDegrees"] = infer
     adapted = adapter.adapt_topoflow(graph, rows=3, columns=3, transport=transport)
     node = graph["nodes"][1]
-    assert adapted.node_families[node] == f"CU{gear}"
+    assert adapted.node_families[node] == f"{prefix}{gear}"
     ports = adapted.problem.facilities[0].ports
     assert ports[kind] == ((2, 0),)
     assert ports[-kind] == ((0, 0),)
     assert len(adapted.external_edges) == 2
+    solution = {"machs": [{"id": 0, "pos": [1, 1], "rot": 0}], "belts": []}
+    result = adapter.enrich_solution(adapted, solution)
+    assert result["machs"][0]["control_gear"] == gear
+    assert result["machs"][0]["topoflow_node_type"] == f"{prefix}{gear}"
 
 
 @pytest.mark.parametrize("rotation", range(4))
@@ -64,10 +69,43 @@ def test_mixed_network_keeps_distinct_facilities():
     assert len(adapted.problem.facilities[2].ports[1]) == 3
 
 
-@pytest.mark.parametrize("gear", [0, 5])
-def test_invalid_gear(gear):
+@pytest.mark.parametrize("prefix,gear", [
+    ("CU", 0), ("CU", 5), ("ICU", 0), ("ICU", 5), ("PCU", 0), ("PCU", 10),
+])
+def test_invalid_gear(prefix, gear):
     with pytest.raises(ValueError, match="unsupported TopoFlow node"):
-        adapter.adapt_topoflow(single_cu(gear), rows=3, columns=3)
+        adapter.adapt_topoflow(single_cu(gear, prefix=prefix), rows=3, columns=3)
+
+
+def test_control_unit_mode_must_match_transport():
+    with pytest.raises(ValueError, match="pipe control unit requires pipe transport"):
+        adapter.adapt_topoflow(single_cu(2, prefix="PCU"), rows=3, columns=3,
+                                transport="belt")
+    with pytest.raises(ValueError, match="item control unit requires belt transport"):
+        adapter.adapt_topoflow(single_cu(2, prefix="ICU"), rows=3, columns=3,
+                                transport="pipe")
+
+
+def test_pcu_nine_is_supported():
+    adapted = adapter.adapt_topoflow(
+        single_cu(9, prefix="PCU"), rows=3, columns=3, transport="pipe"
+    )
+    solution = {"machs": [{"id": 0, "pos": [1, 1], "rot": 0}], "belts": []}
+    result = adapter.enrich_solution(adapted, solution)
+    assert result["machs"][0]["topoflow_node_type"] == "PCU9"
+    assert result["machs"][0]["control_gear"] == 9
+
+
+def test_single_control_layout_with_opposite_anchors():
+    adapted = adapter.adapt_topoflow(
+        single_cu(2), rows=3, columns=3,
+        terminal_anchors={"In": {"side": "left", "offset": 1},
+                          "Out": {"side": "right", "offset": 1}},
+    )
+    solution, _, _ = adapter.solve_topoflow(adapted, time_limit=10, workers=1)
+    assert solution["machs"][0]["control_gear"] == 2
+    assert len(solution["topoflow"]["external_connections"]) == 2
+
 
 
 @pytest.mark.skipif(importlib.util.find_spec("topoflow_native") is None,

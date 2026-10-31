@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Adapt TopoFlow GA results to the minimal logistics layout solver.
 
-TopoFlow chooses a logical splitter/merger topology.  This module keeps that
-topology unchanged, maps its internal nodes to Endfield logistics facilities,
-and delegates physical placement and internal routing to the adjacent
-``solver.py`` standalone solver.
+TopoFlow chooses a logical splitter/merger/control-unit topology.  This module
+keeps that topology unchanged, maps its internal nodes to Endfield logistics
+facilities, and delegates physical placement and internal routing to the
+adjacent ``solver.py`` standalone solver.
 """
 
 from __future__ import annotations
@@ -27,7 +27,10 @@ LAYOUT_REQUEST_SCHEMA = "topoflow-logistics-layout/v1"
 # GA/editor exports may append a numeric uniqueness suffix, for example
 # ``C2_0__45131``.  The suffix is identity metadata only; the first capture
 # group still determines the facility family and therefore its degree rules.
-NODE_PATTERN = re.compile(r"^(S2|S3|C2|C3|CU[1-4])_\d+(?:__\d+)?$")
+NODE_PATTERN = re.compile(
+    r"^(S2|S3|C2|C3|CU[1-4]|ICU[1-4]|PCU[1-9])_\d+(?:__\d+)?$"
+)
+CONTROL_FAMILY_PATTERN = re.compile(r"^(CU|ICU|PCU)([1-9])$")
 EXPECTED_DEGREES = {
     "S2": (1, 2),
     "S3": (1, 3),
@@ -37,9 +40,29 @@ EXPECTED_DEGREES = {
     "CU2": (1, 1),
     "CU3": (1, 1),
     "CU4": (1, 1),
+    "ICU1": (1, 1),
+    "ICU2": (1, 1),
+    "ICU3": (1, 1),
+    "ICU4": (1, 1),
+    "PCU1": (1, 1),
+    "PCU2": (1, 1),
+    "PCU3": (1, 1),
+    "PCU4": (1, 1),
+    "PCU5": (1, 1),
+    "PCU6": (1, 1),
+    "PCU7": (1, 1),
+    "PCU8": (1, 1),
+    "PCU9": (1, 1),
 }
+CONTROL_PREFIXES = ("CU", "ICU", "PCU")
 FAMILY_BY_DEGREE = {degree: family for family, degree in EXPECTED_DEGREES.items()
-                    if not family.startswith("CU")}
+                    if not family.startswith(CONTROL_PREFIXES)}
+
+
+def _control_family_gear(family: str) -> int | None:
+    """Return the gear for CU/ICU/PCU families, or None for S/C families."""
+    match = CONTROL_FAMILY_PATTERN.fullmatch(family)
+    return int(match.group(2)) if match is not None else None
 TRANSPORT_KINDS = {"belt": 1, "pipe": 2}
 TERMINAL_DIRECTIONS = {"bottom": 0, "right": 1, "top": 2, "left": 3}
 LayoutHintCallback = Callable[[dict[str, object]], None]
@@ -211,7 +234,8 @@ def _node_family(node: str) -> str:
     if match is None:
         raise ValueError(
             f"unsupported TopoFlow node {node!r}; expected In, Out, "
-            "S2_<n>, S3_<n>, C2_<n>, C3_<n>, or CU1..CU4_<n>, optionally followed by __<n>"
+            "S2_<n>, S3_<n>, C2_<n>, C3_<n>, CU1..CU4_<n>, "
+            "ICU1..ICU4_<n>, or PCU1..PCU9_<n>, optionally followed by __<n>"
         )
     return match.group(1)
 
@@ -247,9 +271,9 @@ def _validate_topology(
         declared_family = _node_family(node)
         expected = EXPECTED_DEGREES[declared_family]
         actual = (degrees[node][0], degrees[node][1])
-        # Degree alone cannot recover a CU's gear. Never reinterpret it as S/C,
-        # even when automatic degree-based type repair is requested.
-        if declared_family.startswith("CU"):
+        # Degree alone cannot recover a control unit's gear. Never reinterpret
+        # it as S/C, even when automatic degree-based type repair is requested.
+        if _control_family_gear(declared_family) is not None:
             if actual != expected:
                 raise ValueError(f"{node} must have degree {expected}, got {actual}")
             families[node] = declared_family
@@ -297,7 +321,7 @@ def _validate_topology(
 def _facility_for(family: str, kind: int) -> dict[str, object]:
     positive = str(kind)
     negative = str(-kind)
-    if family in ("CU1", "CU2", "CU3", "CU4"):
+    if _control_family_gear(family) is not None:
         return {
             "type": "logi",
             "size": [1, 1],
@@ -422,9 +446,21 @@ def adapt_topoflow(
         edges,
         infer_types_from_degrees=infer_types_from_degrees,
     )
+    for node, family in families.items():
+        if _control_family_gear(family) is None:
+            continue
+        if family.startswith("PCU"):
+            if transport != "pipe":
+                raise ValueError(
+                    f"{node}: pipe control unit requires pipe transport"
+                )
+        elif transport != "belt":
+            raise ValueError(
+                f"{node}: item control unit requires belt transport"
+            )
     internal_nodes = [node for node in nodes if node not in ("In", "Out")]
     if not internal_nodes:
-        raise ValueError("TopoFlow graph has no splitter or merger facilities to place")
+        raise ValueError("TopoFlow graph has no facilities to place")
     initial_grid_is_too_small = len(internal_nodes) > rows * columns
     if initial_grid_is_too_small and not expansion.enabled:
         raise ValueError("the requested grid has fewer cells than TopoFlow internal nodes")
@@ -738,8 +774,9 @@ def enrich_solution(
         node = facility_to_node[facility_id]
         machine["topoflow_node_id"] = node
         machine["topoflow_node_type"] = adapted.node_families[node]
-        if adapted.node_families[node].startswith("CU"):
-            machine["control_gear"] = int(adapted.node_families[node][2:])
+        gear = _control_family_gear(adapted.node_families[node])
+        if gear is not None:
+            machine["control_gear"] = gear
 
     used_ports: dict[tuple[int, int], set[int]] = {}
     for belt, edge in zip(belts, adapted.internal_edges):
@@ -832,6 +869,29 @@ def enrich_solution(
     return solution
 
 
+def _shared_terminal_facility(adapted: AdaptedTopoFlowProblem) -> int | None:
+    """Return the facility fed by In and feeding Out when both are the same one.
+
+    A single-facility graph (for example ``In -> CU -> Out``) is the only valid
+    topology where the two terminals meet at one facility.  Its second terminal
+    cannot be pinned to another boundary cell; that external connection instead
+    leaves the facility through a short transit route.
+    """
+    facility_ids: list[int] = []
+    for edge in adapted.external_edges:
+        if edge.source == "In":
+            node = edge.target
+        elif edge.target == "Out":
+            node = edge.source
+        else:
+            continue
+        facility_ids.append(adapted.node_to_facility[node])
+    if len(facility_ids) < 2:
+        return None
+    first = facility_ids[0]
+    return first if all(facility_id == first for facility_id in facility_ids) else None
+
+
 def _add_terminal_constraints(
     adapted: AdaptedTopoFlowProblem,
     artifacts: solver_module.ModelArtifacts,
@@ -842,6 +902,8 @@ def _add_terminal_constraints(
     kind = TRANSPORT_KINDS[adapted.transport]
     choices: dict[str, object] = {}
     used_by_port: dict[tuple[int, int], list[object]] = {}
+    shared_facility = _shared_terminal_facility(adapted)
+    shared_position_added = False
 
     for edge, variables in zip(adapted.internal_edges, artifacts.connections):
         source_id = adapted.node_to_facility[edge.source]
@@ -872,20 +934,32 @@ def _add_terminal_constraints(
             for rotation in range(4)
             if (port[0] + rotation) % 4 == required_direction
         ]
+        if not allowed:
+            raise ValueError(
+                f"{node}: {terminal} anchor {anchor.side!r} is incompatible "
+                "with the facility's ports"
+            )
         artifacts.model.AddAllowedAssignments([choice, facility_vars.rotation], allowed)
 
-        if anchor.side == "left":
-            artifacts.model.Add(facility_vars.row == anchor.offset)
-            artifacts.model.Add(facility_vars.column == 0)
-        elif anchor.side == "right":
-            artifacts.model.Add(facility_vars.row == anchor.offset)
-            artifacts.model.Add(facility_vars.column == adapted.problem.columns - 1)
-        elif anchor.side == "top":
-            artifacts.model.Add(facility_vars.row == 0)
-            artifacts.model.Add(facility_vars.column == anchor.offset)
-        else:
-            artifacts.model.Add(facility_vars.row == adapted.problem.rows - 1)
-            artifacts.model.Add(facility_vars.column == anchor.offset)
+        add_position = True
+        if facility_id == shared_facility:
+            if shared_position_added:
+                add_position = False
+            else:
+                shared_position_added = True
+        if add_position:
+            if anchor.side == "left":
+                artifacts.model.Add(facility_vars.row == anchor.offset)
+                artifacts.model.Add(facility_vars.column == 0)
+            elif anchor.side == "right":
+                artifacts.model.Add(facility_vars.row == anchor.offset)
+                artifacts.model.Add(facility_vars.column == adapted.problem.columns - 1)
+            elif anchor.side == "top":
+                artifacts.model.Add(facility_vars.row == 0)
+                artifacts.model.Add(facility_vars.column == anchor.offset)
+            else:
+                artifacts.model.Add(facility_vars.row == adapted.problem.rows - 1)
+                artifacts.model.Add(facility_vars.column == anchor.offset)
 
         port_key = (facility_id, port_kind)
         for used_choice in used_by_port.get(port_key, []):
@@ -897,6 +971,7 @@ def _add_terminal_constraints(
 
 def _terminal_positions(adapted: AdaptedTopoFlowProblem) -> dict[int, tuple[int, int]]:
     positions: dict[int, tuple[int, int]] = {}
+    shared_facility = _shared_terminal_facility(adapted)
     for edge in adapted.external_edges:
         terminal = "In" if edge.source == "In" else "Out"
         anchor = adapted.terminal_anchors.get(terminal)
@@ -914,6 +989,10 @@ def _terminal_positions(adapted: AdaptedTopoFlowProblem) -> dict[int, tuple[int,
             position = (adapted.problem.rows - 1, anchor.offset)
         previous = positions.get(facility_id)
         if previous is not None and previous != position:
+            if facility_id == shared_facility:
+                # Keep the first terminal's hard position.  The other terminal
+                # leaves this facility through a transit route to its anchor.
+                continue
             raise ValueError(
                 "In and Out anchors constrain the same facility to different cells"
             )

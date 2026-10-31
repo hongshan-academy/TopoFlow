@@ -1,7 +1,7 @@
 """Export enriched TopoFlow layouts to EnKA Beta v4, without native solver/MCP.
 
 Catalog verified 2026-10-18. This exports geometry; simulation equivalence is
-not implied. See enkad-control-port-notes.md for CU assumptions.
+not implied. See enkad-control-port-notes.md for control-unit assumptions.
 """
 from __future__ import annotations
 
@@ -14,10 +14,23 @@ from pathlib import Path
 import re
 
 
-FAMILY = re.compile(r'^(S[23]|C[23]|CU[1-4])_\d+(?:__\d+)?$')
+FAMILY = re.compile(
+    r'^(S[23]|C[23]|CU[1-4]|ICU[1-4]|PCU[1-9])_\d+(?:__\d+)?$'
+)
+CONTROL_FAMILY = re.compile(r'^(CU|ICU|PCU)([1-9])$')
+CONTROL_FAMILIES = frozenset(
+    [f'CU{gear}' for gear in range(1, 5)]
+    + [f'ICU{gear}' for gear in range(1, 5)]
+    + [f'PCU{gear}' for gear in range(1, 10)]
+)
 DIRECTIONS = ((0, 1), (1, 0), (0, -1), (-1, 0))  # xy outward
 IDS = {'belt': {'S': 35, 'C': 34, 'CU': 37, 'bridge': 36, 'path': 33},
        'pipe': {'S': 39, 'C': 38, 'CU': 41, 'bridge': 40, 'path': 42}}
+
+
+def control_gear(family: str) -> int | None:
+    match = CONTROL_FAMILY.fullmatch(family)
+    return int(match.group(2)) if match is not None else None
 
 
 def integer(value, label, low=0, high=2**32-1):
@@ -110,7 +123,7 @@ def export_layout(solution, *, item_id=None, control_items=None,
     """Return blueprint, native JSON, endpoint manifest and validation warnings.
 
 control_items maps original TopoFlow node IDs to item IDs; item_id is a fallback
-for single-item networks. Pipe CU exports require an explicit rate baseline.
+for single-item networks. Pipe control units require an explicit rate baseline.
 """
     if not isinstance(solution, dict):
         raise ValueError('solution must be an object')
@@ -146,11 +159,11 @@ for single-item networks. Pipe CU exports require an explicit rate baseline.
 
     machines, occupied, entities, routes, endpoints = {}, {}, [], [], []
     assignments_used = set()
-    has_cu = False
+    has_control = False
     control_items = {} if control_items is None else control_items
     if not isinstance(control_items, dict):
-        raise ValueError('control_items must map CU node IDs to item IDs')
-    cu_nodes = set()
+        raise ValueError('control_items must map control-unit node IDs to item IDs')
+    control_nodes = set()
     for machine in solution['machs']:
         if machine.get('size', [1, 1]) != [1, 1] or machine.get('type', 'logi') != 'logi':
             raise ValueError('only 1x1 logistics facilities are supported')
@@ -161,34 +174,43 @@ for single-item networks. Pipe CU exports require an explicit rate baseline.
             raise ValueError(f'unsupported facility {node}')
         declared_family = match[1]
         family = machine.get('topoflow_node_type', declared_family)
-        if family not in ('S2', 'S3', 'C2', 'C3', 'CU1', 'CU2', 'CU3', 'CU4'):
+        if family not in ('S2', 'S3', 'C2', 'C3') and family not in CONTROL_FAMILIES:
             raise ValueError(f'{node}: unsupported facility family {family!r}')
-        # Degree-based repair preserves S/C node IDs, but CU identity fixes its gear.
-        if (declared_family.startswith('CU') or family.startswith('CU')) and family != declared_family:
+        gear = control_gear(family)
+        # Degree-based repair preserves S/C node IDs, but control-unit identity
+        # fixes both its family and its gear.
+        if (control_gear(declared_family) is not None or gear is not None) and family != declared_family:
             raise ValueError(f'{node}: declared family mismatch')
         rot = integer(machine['rot'], f'{node}.rot', 0, 3)
         pos = cell(machine['pos'])
         if mid in machines or pos in occupied or any(m['node'] == node for m in machines.values()):
             raise ValueError('duplicate facility ID, node or occupied cell')
-        group = 'CU' if family.startswith('CU') else family[0]
+        group = 'CU' if gear is not None else family[0]
         inputs = {(d+rot) % 4 for d in ([0, 1, 3] if group == 'C' else [2])}
         outputs = {(d+rot) % 4 for d in ([0, 1, 3] if group == 'S' else [2] if group == 'C' else [0])}
         building = {'rotation': ((0 if group == 'C' else 180) - 90*rot) % 360}
-        if group == 'CU':
-            has_cu = True
-            cu_nodes.add(node)
-            gear = int(family[2])
+        if gear is not None:
+            has_control = True
+            control_nodes.add(node)
             if machine.get('control_gear', gear) != gear:
                 raise ValueError(f'{node}: control_gear mismatch')
             selected = control_items.get(node, item_id)
             integer(selected, f'{node} item_id (required)', 1)
+            if family.startswith('PCU'):
+                if transport != 'pipe':
+                    raise ValueError(f'{node}: pipe control unit requires pipe transport')
+                denominator = 20
+            else:
+                if transport != 'belt':
+                    raise ValueError(f'{node}: item control unit requires belt transport')
+                denominator = 5
             baseline = full_rate_per_minute
             if baseline is None:
                 if transport == 'pipe':
-                    raise ValueError('pipe CU requires explicit full_rate_per_minute')
+                    raise ValueError('pipe control unit requires explicit full_rate_per_minute')
                 baseline = 30
             try:
-                rate = Fraction(str(baseline)) * gear / 5
+                rate = Fraction(str(baseline)) * gear / denominator
             except (ValueError, ZeroDivisionError):
                 raise ValueError('full_rate_per_minute must be a positive number') from None
             maximum = 30 if kind == 1 else 120
@@ -203,8 +225,8 @@ for single-item networks. Pipe CU exports require an explicit rate baseline.
                          'x': pos[0], 'y': pos[1], 'building': building})
     if not machines:
         raise ValueError('no facilities to export')
-    if set(control_items) - cu_nodes:
-        raise ValueError('control_items references unknown CU nodes')
+    if set(control_items) - control_nodes:
+        raise ValueError('control_items references unknown control-unit nodes')
 
     def port(mid, assignment, output):
         if not isinstance(assignment, dict):
@@ -341,8 +363,9 @@ for single-item networks. Pipe CU exports require an explicit rate baseline.
               'layers': [{'layer_tag': 3 if kind == 1 else 5, 'entities': entities}]}
     warnings = ['已验证导出几何；尚未在 EnKA 中验证导入和生产仿真。',
                 '物品 ID 需来自当前 EnKA 目录；本接口不验证物品名称、类型或版本。']
-    if has_cu:
-        warnings.append('CU 仅按平均流量映射，未验证 EnKA 与五 tick 接收窗口等价；'
+    if has_control:
+        warnings.append('准入口仅按平均流量映射，未验证 EnKA 与五 tick 接收窗口等价；'
+                        '物品 CU/ICU 使用 5 分母，管道 PCU 使用 20 分母；'
                         '物品带缺省基准为 30/m，counter=0。')
     return {'blueprint': encode(layout), 'layout': layout,
             'manifest': {'offset': [ox, oy], 'transport': transport,
