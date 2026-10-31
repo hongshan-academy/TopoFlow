@@ -63,8 +63,17 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 10px;
       }
-      .gear-chips { display: inline-flex; gap: 6px; }
+      .gear-chips {
+        display: inline-flex;
+        flex-wrap: wrap;
+        justify-content: flex-start;
+        gap: 6px;
+        max-width: 100%;
+      }
+      .object-status-row .gear-chips { justify-content: flex-end; }
       .gear-chip {
+        flex: 0 0 auto;
+        width: auto;
         padding: 3px 8px;
         border: 1px solid var(--line);
         border-radius: 999px;
@@ -72,6 +81,7 @@
         color: var(--ink);
         font-size: 12px;
         line-height: 1.4;
+        white-space: nowrap;
         cursor: pointer;
       }
       .gear-chip.is-active {
@@ -315,8 +325,16 @@
         font-size: 13px;
         line-height: 1.4;
       }
-      .object-status-row span:first-child { color: var(--muted); }
-      .object-status-row span:last-child { text-align: right; overflow-wrap: anywhere; }
+      .object-status-row span:first-child {
+        flex: 0 0 auto;
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      .object-status-row span:last-child {
+        min-width: 0;
+        text-align: right;
+        overflow-wrap: anywhere;
+      }
       .object-status-empty { color: var(--muted); font-size: 13px; line-height: 1.5; }
 
       .app-toast {
