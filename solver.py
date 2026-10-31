@@ -103,6 +103,8 @@ def solve_native(
             entry["state"] = state
             entry["isBlocked"] = state == "blocked"
             entry["isFull"] = full
+            entry["canIn"] = bool(can_in[index])
+            entry["canOut"] = bool(can_out[index])
         edge_flows.append(entry)
 
     return {
