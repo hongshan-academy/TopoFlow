@@ -506,22 +506,14 @@
     if (layoutFrameLoaded) postLayoutToFrame(meta);
     else layoutPendingMeta = meta; // 等 iframe 加载完成后再注入
     els.layoutOverlay.style.display = "block";
-    els.layoutToggleBtn.textContent = "返回拓扑图";
-    els.layoutToggleBtn.style.display = "block";
+    els.layoutToggleBtn.style.display = "none";
   }
 
   /** 关闭覆盖层，回归原图渲染。 */
   function closeLayoutOverlay() {
     els.layoutOverlay.style.display = "none";
-    els.layoutToggleBtn.textContent = "查看物理结构";
-  }
-
-  /** 切换「原图」与「物理结构」视图。 */
-  function toggleLayoutView() {
-    if (els.layoutOverlay.style.display === "none") {
-      showLayoutOverlay(state.topologyLayout);
-    } else {
-      closeLayoutOverlay();
+    if (state.topologyLayout) {
+      els.layoutToggleBtn.style.display = "block";
     }
   }
 
@@ -882,7 +874,9 @@
 
     // 物理布局（调用内置布局求解器）
     els.layoutBtn.addEventListener("click", triggerTopoflowLayout);
-    els.layoutToggleBtn.addEventListener("click", toggleLayoutView);
+    els.layoutToggleBtn.addEventListener("click", () => {
+      showLayoutOverlay(state.topologyLayout);
+    });
     els.layoutExportBtn.addEventListener("click", onLayoutExport);
     els.layoutImportBtn.addEventListener("click", onLayoutImport);
     els.layoutImportFile.addEventListener("change", handleLayoutImportFile);
@@ -924,6 +918,11 @@
 
   function onKeyDown(event) {
     if (isEditableTarget(event.target)) return;
+    if (event.key === "Escape" && els.layoutOverlay.style.display === "block") {
+      event.preventDefault();
+      closeLayoutOverlay();
+      return;
+    }
     const keyMap = {
       "1": "add-S", "2": "add-C", "3": "add-In", "4": "add-Out", "5": "add-U",
     };
