@@ -772,6 +772,7 @@ def _collect_cycle(
         if sim.tick % TICKS_PER_FRAME == 0:
             frames.append(sim.get_snapshot())
 
+    cycle_start_state = sim.serialize_state()
     node_counts: Dict[Node, int] = {node: 0 for node in graph.nodes}
     edge_counts: Dict[EdgeKey, int] = {edge: 0 for edge in sim._all_edges}
     for _ in range(period):
@@ -783,6 +784,14 @@ def _collect_cycle(
             edge_counts[edge] += 1
         if sim.tick % TICKS_PER_FRAME == 0:
             frames.append(sim.get_snapshot())
+
+    # Brent's lambda is the internal period; verify it explicitly against the
+    # complete tick state rather than trusting the two-pointer meeting alone.
+    if sim.serialize_state() != cycle_start_state:
+        raise RuntimeError(
+            "cycle verification failed: the tick state did not repeat after "
+            f"{period} ticks from tick {warmup}"
+        )
 
     divisor = math.gcd(period, TICKS_PER_FRAME)
     period_frames = period // divisor
