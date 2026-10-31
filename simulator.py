@@ -12,10 +12,11 @@ The physical model follows the sibling ``topo-layout`` engine:
 
 The simulator keeps the complete sub-frame state: every item's position on
 every edge, node buffers, round-robin cursors, source cooldowns and the
-control-port window phase.  ``serialize_state`` packs that state into a compact
-byte string, and cycle detection compares a 160-bit digest of it at tick
-resolution.  Sampling only every eight ticks would alias short periods and
-could merge physically different states, so it is deliberately not used.
+control-port window phase.  ``serialize_state`` returns a hashable tuple of
+that state.  Cycle detection uses Brent's two-pointer algorithm on two full
+states (O(1) memory, exact comparison) at tick resolution.  Sampling only
+every eight ticks would alias short periods and could merge physically
+different states, so it is deliberately not used.
 
 ``TopoFlowSimulator.step_once`` advances one replay frame and is kept for the
 existing web API and for callers that treat a frame as the unit of work.
@@ -25,7 +26,6 @@ period, and returns snapshots only at frame boundaries.
 
 from __future__ import annotations
 
-import hashlib
 import math
 from collections import deque
 from dataclasses import dataclass
@@ -41,7 +41,6 @@ EDGE_CAPACITY = DEFAULT_EDGE_LENGTH
 CONTROL_WINDOW_TICKS = 40
 BELT_SPACING = 8
 PIPE_SPACING = 2
-STATE_DIGEST_BYTES = 20
 
 EdgeKey = Tuple[Node, Node, int]
 
@@ -165,35 +164,10 @@ class _Transport:
             return int(self.pending)
         return len(self.entries)
 
-    def occupancy(self) -> List[bool]:
-        """Occupied positions from downstream to upstream (for snapshots)."""
-        if self.capacity == 0:
-            return [self.pending]
-        occupied = [False] * self.maxlen
-        for remaining in self.entries:
-            position = self.maxlen - remaining
-            if 0 <= position < self.maxlen:
-                occupied[position] = True
-        return occupied
-
     def positions(self) -> List[int]:
         if self.capacity == 0:
             return [] if not self.pending else [0]
         return [self.maxlen - remaining for remaining in self.entries]
-
-    def state_bits(self) -> Tuple[int, int]:
-        """Return ``(mask, byte_count)`` for a compact state key.
-
-        Bit zero represents an item still pending one position before the
-        belt; bit ``position + 1`` represents an item at ``position``.
-        """
-        if self.capacity == 0:
-            return (1 if self.pending else 0), 1
-        mask = 0
-        for remaining in self.entries:
-            position = self.maxlen - remaining
-            mask |= 1 << (position + 1)
-        return mask, (self.maxlen + 8) // 8
 
 
 class _EdgeQueue:
@@ -417,6 +391,37 @@ class TopoFlowSimulator:
             edge: _EdgeQueue(self._transports[edge]) for edge in self._all_edges
         }
 
+    def clone(self) -> "TopoFlowSimulator":
+        """Return an independent copy of the current tick state.
+
+        The graph, transport family and edge lengths are immutable, so only
+        the node runtimes and transport contents need copying.  Two clones are
+        enough for the cycle detector's two pointers; no state history is kept.
+        """
+        other = TopoFlowSimulator(
+            self.graph,
+            transport=self.transport,
+            edge_lengths=list(self._edge_lengths),
+        )
+        other.tick = self.tick
+        other.frame = self.frame
+        for node, runtime in self.node_runtime.items():
+            other.node_runtime[node] = NodeRuntime(
+                has_item=runtime.has_item,
+                rr_in_index=runtime.rr_in_index,
+                rr_out_index=runtime.rr_out_index,
+                cu_window_age=runtime.cu_window_age,
+                cu_window_received=runtime.cu_window_received,
+                cu_window_start=runtime.cu_window_start,
+                source_cooldown=runtime.source_cooldown,
+                source_enabled=runtime.source_enabled,
+            )
+        for edge, transport in self._transports.items():
+            target = other._transports[edge]
+            target.entries = deque(transport.entries)
+            target.pending = transport.pending
+        return other
+
     # -- legacy selection helpers -------------------------------------
     def _can_edge_deliver(self, edge: EdgeKey) -> bool:
         return edge[1] in self.deliverable
@@ -638,34 +643,35 @@ class TopoFlowSimulator:
         return node_received, edge_filled
 
     # -- serialization -------------------------------------------------
-    def serialize_state(self) -> bytes:
-        """Pack the complete physical state into a compact byte string.
+    def serialize_state(self) -> Tuple[Any, ...]:
+        """Return the complete physical state as a hashable tuple.
 
-        Node fields are packed into four bytes each; an edge is a bitmask with
-        one bit per position (plus one pending bit).  Only physical state is
-        included: monotonic counters and absolute ticks are excluded.
+        Only two states exist at once during cycle detection (one per pointer),
+        so there is no reason to bit-pack this value.  The tuple records every
+        item's remaining position, the node buffers, both round-robin cursors,
+        the control window phase and the source cooldown.  Monotonic counters
+        and absolute ticks are excluded.
         """
-        buffer = bytearray()
-        for node in self.update_order:
-            runtime = self.node_runtime[node]
-            packed = (
-                (1 if runtime.has_item else 0)
-                | ((runtime.rr_in_index + 1) & 0xF) << 1
-                | ((runtime.rr_out_index + 1) & 0xF) << 5
-                | ((runtime.cu_window_age + 1) & 0x3F) << 9
-                | (runtime.cu_window_received & 0xF) << 15
-                | (runtime.source_cooldown & 0xF) << 19
-                | ((1 if runtime.source_enabled else 0) << 23)
+        node_part = tuple(
+            (
+                self.node_runtime[node].has_item,
+                self.node_runtime[node].rr_in_index,
+                self.node_runtime[node].rr_out_index,
+                self.node_runtime[node].cu_window_age,
+                self.node_runtime[node].cu_window_received,
+                self.node_runtime[node].source_cooldown,
+                self.node_runtime[node].source_enabled,
             )
-            buffer += packed.to_bytes(4, "little")
-        for edge in self._all_edges:
-            mask, byte_count = self._transports[edge].state_bits()
-            buffer += mask.to_bytes(byte_count, "little")
-        return bytes(buffer)
-
-    @staticmethod
-    def _state_digest(state: bytes) -> bytes:
-        return hashlib.blake2b(state, digest_size=STATE_DIGEST_BYTES).digest()
+            for node in self.update_order
+        )
+        edge_part = tuple(
+            (
+                tuple(self._transports[edge].entries),
+                self._transports[edge].pending,
+            )
+            for edge in self._all_edges
+        )
+        return node_part + edge_part
 
     # -- snapshots -----------------------------------------------------
     def get_snapshot(self, *, include_positions: bool = False) -> Dict[str, Any]:
@@ -711,39 +717,103 @@ class TopoFlowSimulator:
 # Cycle driver
 # ---------------------------------------------------------------------------
 
-def _count_cycle_events(
-    graph: Graph,
-    start_tick: int,
-    end_tick: int,
-    *,
-    transport: Optional[str],
-    edge_length: Optional[int],
-    edge_lengths: Optional[Mapping[Any, int] | Sequence[int] | int],
-) -> Tuple[Dict[Node, int], Dict[EdgeKey, int]]:
-    """Replay the run and count only the events in ``[start_tick, end_tick)``.
+def _find_cycle_brent(
+    sim: TopoFlowSimulator,
+    max_ticks: Optional[int],
+) -> Optional[Tuple[int, int]]:
+    """Find ``(warmup, period)`` with Brent's two-pointer algorithm.
 
-    A state digest table is deliberately not used here: keeping a counter
-    snapshot for every tick would dominate memory, while one replay costs only
-    a second pass over an already bounded run.
+    Only two states are alive at once: the tortoise (the teleport checkpoint)
+    and the hare.  Their full packed tuples are compared byte-for-byte, so
+    this is exact and needs no state history or hash-collision assumption.
     """
-    sim = TopoFlowSimulator(
-        graph,
-        transport=transport,
-        edge_length=edge_length,
-        edge_lengths=edge_lengths,
-    )
+    power = 1
+    period = 1
+    tortoise = sim.clone()
+    hare = sim.clone()
+    hare.step_tick()
+    if max_ticks is not None and hare.tick >= max_ticks:
+        return None
+
+    while tortoise.serialize_state() != hare.serialize_state():
+        if power == period:
+            tortoise = hare.clone()
+            power *= 2
+            period = 0
+        hare.step_tick()
+        period += 1
+        if max_ticks is not None and hare.tick >= max_ticks:
+            return None
+
+    tortoise = sim.clone()
+    hare = sim.clone()
+    for _ in range(period):
+        hare.step_tick()
+    warmup = 0
+    while tortoise.serialize_state() != hare.serialize_state():
+        tortoise.step_tick()
+        hare.step_tick()
+        warmup += 1
+        if max_ticks is not None and hare.tick >= max_ticks:
+            return None
+    return warmup, period
+
+
+def _collect_cycle(
+    sim: TopoFlowSimulator,
+    warmup: int,
+    period: int,
+    graph: Graph,
+) -> Tuple[List[Dict[str, Any]], Dict[Node, int], Dict[EdgeKey, int]]:
+    """Replay ``[0, warmup + period)`` and count only the cycle interval."""
+    frames: List[Dict[str, Any]] = [sim.get_snapshot()]
+    while sim.tick < warmup:
+        sim.step_tick()
+        if sim.tick % TICKS_PER_FRAME == 0:
+            frames.append(sim.get_snapshot())
+
     node_counts: Dict[Node, int] = {node: 0 for node in graph.nodes}
     edge_counts: Dict[EdgeKey, int] = {edge: 0 for edge in sim._all_edges}
-    while sim.tick < start_tick:
-        sim.step_tick()
-    while sim.tick < end_tick:
+    for _ in range(period):
         received, filled = sim.step_tick()
         for node, value in received.items():
             if value:
                 node_counts[node] += 1
         for edge in filled:
             edge_counts[edge] += 1
-    return node_counts, edge_counts
+        if sim.tick % TICKS_PER_FRAME == 0:
+            frames.append(sim.get_snapshot())
+
+    divisor = math.gcd(period, TICKS_PER_FRAME)
+    period_frames = period // divisor
+    cycle_start_frame = (warmup + TICKS_PER_FRAME - 1) // TICKS_PER_FRAME
+    target_tick = (cycle_start_frame + period_frames) * TICKS_PER_FRAME
+    while sim.tick < target_tick:
+        sim.step_tick()
+        if sim.tick % TICKS_PER_FRAME == 0:
+            frames.append(sim.get_snapshot())
+    return frames, node_counts, edge_counts
+
+
+def _collect_until(
+    sim: TopoFlowSimulator,
+    max_ticks: Optional[int],
+    graph: Graph,
+) -> Tuple[List[Dict[str, Any]], Dict[Node, int], Dict[EdgeKey, int]]:
+    """Run to the frame budget, returning snapshots and event totals."""
+    frames: List[Dict[str, Any]] = [sim.get_snapshot()]
+    node_counts: Dict[Node, int] = {node: 0 for node in graph.nodes}
+    edge_counts: Dict[EdgeKey, int] = {edge: 0 for edge in sim._all_edges}
+    while max_ticks is not None and sim.tick < max_ticks:
+        received, filled = sim.step_tick()
+        for node, value in received.items():
+            if value:
+                node_counts[node] += 1
+        for edge in filled:
+            edge_counts[edge] += 1
+        if sim.tick % TICKS_PER_FRAME == 0:
+            frames.append(sim.get_snapshot())
+    return frames, node_counts, edge_counts
 
 
 def _build_cycle_result(
@@ -825,9 +895,11 @@ def simulate_frames(
 ) -> Dict[str, Any]:
     """Run until the first repeated tick state, returning frame snapshots.
 
-    ``max_frames`` is still a frame budget (one frame = eight ticks) so the
-    existing API remains compatible.  The returned cycle carries both the true
-    ``period_ticks`` and the frame-compatible ``period``.
+    Cycle detection is Brent's two-pointer algorithm over exact state tuples,
+    so memory stays O(1) in the run length.  ``max_frames`` is still a frame
+    budget (one frame = eight ticks) so the existing API remains compatible.
+    The returned cycle carries both the true ``period_ticks`` and the
+    frame-compatible ``period``.
     """
     sim = TopoFlowSimulator(
         graph,
@@ -835,67 +907,32 @@ def simulate_frames(
         edge_length=edge_length,
         edge_lengths=edge_lengths,
     )
-
-    frames: List[Dict[str, Any]] = [sim.get_snapshot()]
-    seen: Dict[bytes, int] = {}
-    node_flow_ones: Dict[Node, int] = {node: 0 for node in graph.nodes}
-    edge_flow_ones: Dict[EdgeKey, int] = {edge: 0 for edge in sim._all_edges}
     max_ticks = None if max_frames is None else max_frames * TICKS_PER_FRAME
 
-    while True:
-        if max_ticks is not None and sim.tick >= max_ticks:
-            return {
-                "cycle": _build_max_frames_result(sim, node_flow_ones, edge_flow_ones),
-                "frames": frames,
-            }
+    cycle = _find_cycle_brent(sim, max_ticks)
+    if cycle is None or (
+        max_ticks is not None and cycle[0] + cycle[1] >= max_ticks
+    ):
+        frames, node_counts, edge_counts = _collect_until(sim, max_ticks, graph)
+        return {
+            "cycle": _build_max_frames_result(sim, node_counts, edge_counts),
+            "frames": frames,
+        }
 
-        state = sim.serialize_state()
-        digest = sim._state_digest(state)
-        previous = seen.get(digest)
-        if previous is not None:
-            start_tick = previous
-            end_tick = sim.tick
-            period_ticks = end_tick - start_tick
-            divisor = math.gcd(period_ticks, TICKS_PER_FRAME)
-            period_frames = period_ticks // divisor
-            cycle_start_frame = (
-                start_tick + TICKS_PER_FRAME - 1
-            ) // TICKS_PER_FRAME
-            target_tick = (cycle_start_frame + period_frames) * TICKS_PER_FRAME
-            while sim.tick < target_tick:
-                sim.step_tick()
-                if sim.tick % TICKS_PER_FRAME == 0:
-                    frames.append(sim.get_snapshot())
-
-            node_counts, edge_counts = _count_cycle_events(
-                graph,
-                start_tick,
-                end_tick,
-                transport=transport,
-                edge_length=edge_length,
-                edge_lengths=edge_lengths,
-            )
-            return {
-                "cycle": _build_cycle_result(
-                    graph=graph,
-                    start_tick=start_tick,
-                    end_tick=end_tick,
-                    total_tick=sim.tick,
-                    frame_count=len(frames) - 1,
-                    node_counts=node_counts,
-                    edge_counts=edge_counts,
-                    transport=sim.transport,
-                ),
-                "frames": frames,
-            }
-
-        seen[digest] = sim.tick
-        received, filled = sim.step_tick()
-        for node, value in received.items():
-            if value:
-                node_flow_ones[node] += 1
-        for edge in filled:
-            edge_flow_ones[edge] += 1
-
-        if sim.tick % TICKS_PER_FRAME == 0:
-            frames.append(sim.get_snapshot())
+    warmup, period = cycle
+    frames, node_counts, edge_counts = _collect_cycle(
+        sim, warmup, period, graph
+    )
+    return {
+        "cycle": _build_cycle_result(
+            graph=graph,
+            start_tick=warmup,
+            end_tick=warmup + period,
+            total_tick=sim.tick,
+            frame_count=len(frames) - 1,
+            node_counts=node_counts,
+            edge_counts=edge_counts,
+            transport=sim.transport,
+        ),
+        "frames": frames,
+    }
