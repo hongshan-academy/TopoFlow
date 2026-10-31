@@ -217,7 +217,7 @@ for single-item networks. Pipe control units require an explicit rate baseline.
             if not 0 < rate <= maximum or (rate * 2).denominator != 1:
                 raise ValueError(f'{node}: rate must be a positive half-unit <= {maximum}/min')
             building.update(value=0 if rate == maximum else int(rate*2),
-                            port_items=[{'port_index': 0, 'item_id': selected}])
+                            port_items=[{'port_index': 0, 'item_id': selected}]) # type: ignore
         uid = len(entities) + 1
         machines[mid] = {'node': node, 'pos': pos, 'inputs': inputs, 'outputs': outputs, 'uid': uid}
         occupied[pos] = uid
