@@ -446,7 +446,7 @@
           <div class="kind-item"><div class="kind-glyph splitter">S3</div><div><div class="kind-name">三路分流器</div><div class="kind-sub">一入三出</div></div><div class="kind-count" id="count-s3">0</div></div>
           <div class="kind-item"><div class="kind-glyph merger">C2</div><div><div class="kind-name">二路汇流器</div><div class="kind-sub">映射三入口设施</div></div><div class="kind-count" id="count-c2">0</div></div>
           <div class="kind-item"><div class="kind-glyph merger">C3</div><div><div class="kind-name">三路汇流器</div><div class="kind-sub">三入一出</div></div><div class="kind-count" id="count-c3">0</div></div>
-          <div class="kind-item"><div class="kind-glyph">CU</div><div><div class="kind-name">准入口</div><div class="kind-sub">一入一出 · 物品 ICU/CU · 管道 PCU</div></div><div class="kind-count" id="count-cu">0</div></div>
+          <div class="kind-item"><div class="kind-glyph" id="cu-kind-glyph">ICU</div><div><div class="kind-name">准入口</div><div class="kind-sub" id="cu-kind-sub">一入一出 · 物品 ICU/CU</div></div><div class="kind-count" id="count-cu">0</div></div>
           <div class="kind-item"><div class="kind-glyph entry">IN</div><div><div class="kind-name">入口</div><div class="kind-sub">可拖动边界终端</div></div><div class="kind-count">1</div></div>
           <div class="kind-item"><div class="kind-glyph exit">OUT</div><div><div class="kind-name">出口</div><div class="kind-sub">可拖动边界终端</div></div><div class="kind-count">1</div></div>
         </div>
@@ -1328,6 +1328,9 @@
   function syncControls() {
     $("#project-name").value = state.name; $("#rows-input").value = state.rows; $("#cols-input").value = state.columns;
     $("#transport-select").value = state.transport;
+    const pipeMode = state.transport === "pipe";
+    $("#cu-kind-glyph").textContent = pipeMode ? "PCU" : "ICU";
+    $("#cu-kind-sub").textContent = pipeMode ? "一入一出 · 管道 PCU" : "一入一出 · 物品 ICU/CU";
     $("#input-pattern-input").value = state.inputPattern;
     $("#min-splitter-merger-belt-input").checked = state.constraints.requireSplitterMergerBeltCell;
     $("#sizing-mode-select").value = state.expansion.sizingMode;

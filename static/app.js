@@ -39,6 +39,10 @@
   const TYPE_LABELS = {
     In: "In", Out: "Out", S: "S", C: "C", U: "CU",
   };
+  function nodeTypeLabel(node) {
+    if (node.type === "U") return controlInfoOf(node.id)?.prefix ?? "CU";
+    return TYPE_LABELS[node.type] || node.type;
+  }
   const NODE_COLORS = {
     In: "#2e8b57", Out: "#c84c3a", S: "#2f6fed", C: "#d98a1f", U: "#7a5cc4",
   };
@@ -138,7 +142,8 @@
     saveList: document.getElementById("save-list"),
     graphStats: document.getElementById("graph-stats"),
     toolButtons: [...document.querySelectorAll("[data-mode-button]")],
-    paletteModeChips: document.getElementById("palette-mode-chips"),
+    palettePipeToggle: document.getElementById("palette-pipe-toggle"),
+    paletteControlLabel: document.getElementById("palette-control-label"),
     paletteGearChips: document.getElementById("palette-gear-chips"),
     importJsonInput: document.getElementById("import-json-input"),
     importBtn: document.getElementById("import-btn"),
@@ -368,6 +373,7 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         nodes, edges,
+        transport: state.controlMode === "pipe" ? "pipe" : "belt",
         requireBeltCell: !!opts.requireBeltCell,
         timeLimit: opts.timeLimit ?? 30.0,
         minGrid: opts.minGrid ?? 3,
@@ -603,7 +609,14 @@
     const resp = await fetch(`${API_BASE}/api/simulate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ nodes, edges, options: { max_frames: maxFrames } }),
+      body: JSON.stringify({
+        nodes,
+        edges,
+        options: {
+          max_frames: maxFrames,
+          transport: state.controlMode === "pipe" ? "pipe" : "belt",
+        },
+      }),
     });
     if (!resp.ok) {
       let msg;
@@ -633,8 +646,11 @@
       state.simCycle = data.cycleInfo || null;
       if (els.simStatus) {
         const ci = state.simCycle;
+        const tickText = ci?.periodTicks != null ? `（${ci.periodTicks} tick）` : "";
         els.simStatus.textContent = ci
-          ? `完成：周期 ${ci.period} 帧，预热 ${ci.warmupFrames} 帧，共 ${state.simFrames.length} 帧`
+          ? ci.converged === false
+            ? `未收敛：达到帧数上限，共 ${state.simFrames.length} 帧`
+            : `完成：周期 ${ci.period} 帧${tickText}，预热 ${ci.warmupFrames} 帧，共 ${state.simFrames.length} 帧`
           : `完成：${state.simFrames.length} 帧`;
       }
       showToast(`仿真完成，共 ${state.simFrames.length} 帧`, "info");
@@ -782,6 +798,8 @@
     state.simFrame = 0;
     state.simCycle = null;
     ensureSelectedObject();
+    syncControlModeFromGraph();
+    renderPaletteGears();
     state.message = message;
     render();
   }
@@ -840,12 +858,8 @@
       });
     }
 
-    els.paletteModeChips.addEventListener("click", (event) => {
-      const chip = event.target.closest("[data-control-mode]");
-      if (!chip) return;
-      state.controlMode = chip.getAttribute("data-control-mode") === "pipe" ? "pipe" : "item";
-      state.controlGear = clamp(state.controlGear, 1, controlMaxGear(state.controlMode));
-      renderPaletteGears();
+    els.palettePipeToggle.addEventListener("change", () => {
+      setGlobalControlMode(els.palettePipeToggle.checked ? "pipe" : "item");
     });
     els.paletteGearChips.addEventListener("click", (event) => {
       const chip = event.target.closest("[data-gear]");
@@ -1273,25 +1287,20 @@
         cycleRatio = state.simCycle?.nodeRatios?.[node.id];
       }
       objectRows = [
-        ["节点", `${node.id}（${TYPE_LABELS[node.type] || node.type}）`],
+        ["节点", `${node.id}（${nodeTypeLabel(node)}）`],
         ["入边 / 出边", `${incoming} / ${outgoing}`],
       ];
       if (node.type === "U") {
         const info = controlInfoOf(node.id) || { mode: "item", gear: 1, index: 0 };
         const denominator = controlDenominator(info.mode);
-        const modeChips = ["item", "pipe"]
-          .map(
-            (mode) =>
-              `<button type="button" class="gear-chip${mode === info.mode ? " is-active" : ""}" data-control-mode="${mode}" onclick="window._setControlMode('${escapeHtml(node.id)}', '${mode}')">${mode === "pipe" ? "管道" : "物品"}</button>`
-          )
-          .join("");
         const chips = Array.from({ length: controlMaxGear(info.mode) }, (_, index) => index + 1)
           .map(
             (g) =>
               `<button type="button" class="gear-chip${g === info.gear ? " is-active" : ""}" data-gear="${g}" title="${6 * g}/m" onclick="window._setControlGear('${escapeHtml(node.id)}', ${g})">${g}/${denominator}</button>`
           )
           .join("");
-        gearSection = `<section class="object-status-section"><h3>准入口</h3><div class="object-status-row"><span>模式</span><span class="gear-chips">${modeChips}</span></div><div class="object-status-row"><span>挡位</span><span class="gear-chips">${chips}</span></div></section>`;
+        const modeLabel = info.mode === "pipe" ? "PCU 管道" : "ICU 物品";
+        gearSection = `<section class="object-status-section"><h3>准入口</h3><div class="object-status-row"><span>模式</span><span>${modeLabel}（左侧开关切换）</span></div><div class="object-status-row"><span>挡位</span><span class="gear-chips">${chips}</span></div></section>`;
       }
       solverRows = nodeFlow
         ? [["流量", nodeFlow.text]]
@@ -1333,7 +1342,7 @@
         ["周期流量", cycleRatio?.textReduced ?? cycleRatio?.text ?? (state.simCycle ? "未提供" : "尚未仿真")],
         ["当前帧队列", snapshot
           ? Array.isArray(edgeSnapshot?.queue)
-            ? `${edgeSnapshot.queue.length} / ${SIM_EDGE_CAPACITY}`
+            ? `${edgeSnapshot.queue.length} / ${Number.isInteger(edgeSnapshot?.length) ? edgeSnapshot.length : SIM_EDGE_CAPACITY}`
             : "未提供"
           : "尚未仿真"],
       ];
@@ -1345,8 +1354,16 @@
     if (frame !== null) {
       simulationRows.unshift(["回放帧", `${frame} / ${state.simFrames.length}`]);
     }
-    if (state.simCycle?.period != null) {
-      simulationRows.push(["周期长度", `${state.simCycle.period} 帧`]);
+    if (state.simCycle?.converged === false) {
+      simulationRows.push(["周期长度", "未收敛（达到帧数上限）"]);
+    } else if (state.simCycle?.period != null) {
+      const tickPeriod = state.simCycle?.periodTicks;
+      simulationRows.push([
+        "周期长度",
+        tickPeriod != null
+          ? `${state.simCycle.period} 帧（${tickPeriod} tick）`
+          : `${state.simCycle.period} 帧`,
+      ]);
     }
 
     content.className = "";
@@ -1450,7 +1467,7 @@
         <g class="node${selectedClass}${busyClass}${edgeStartClass}" data-node-id="${node.id}" transform="translate(${node.x}, ${node.y})">
           <circle r="${NODE_RADIUS}" fill="${NODE_COLORS[node.type]}"></circle>
           <text text-anchor="middle" dy="-2">${escapeHtml(node.id)}</text>
-          <text class="node-type" text-anchor="middle" dy="14">${TYPE_LABELS[node.type]}</text>
+          <text class="node-type" text-anchor="middle" dy="14">${escapeHtml(nodeTypeLabel(node))}</text>
           ${
             continuousNodeFlow
               ? `<text class="node-flow node-flow-continuous" text-anchor="middle" dy="59">${escapeHtml(continuousNodeFlow.text)}</text>`
@@ -1699,6 +1716,64 @@
     );
   }
 
+  function syncControlModeFromGraph() {
+    let item = 0;
+    let pipe = 0;
+    for (const node of state.graph.nodes) {
+      if (node.type !== "U") continue;
+      const info = controlInfoOf(node.id);
+      if (info?.mode === "pipe") pipe += 1;
+      else item += 1;
+    }
+    if (pipe > 0 && item === 0) state.controlMode = "pipe";
+    else if (item > 0 && pipe === 0) state.controlMode = "item";
+  }
+
+  // One switch owns the transport family for the whole graph.  Converting
+  // existing ports keeps the naming consistent with the simulator and the
+  // physical-layout exporter, both of which require a single transport.
+  function setGlobalControlMode(mode) {
+    const nextMode = mode === "pipe" ? "pipe" : "item";
+    if (nextMode === state.controlMode) return;
+    state.controlMode = nextMode;
+    state.controlGear = clamp(state.controlGear, 1, controlMaxGear(nextMode));
+
+    const used = new Set(state.graph.nodes.map((node) => node.id));
+    let converted = 0;
+    for (const node of state.graph.nodes) {
+      if (node.type !== "U") continue;
+      const info = controlInfoOf(node.id);
+      if (!info || info.mode === nextMode) continue;
+      const gear = clamp(info.gear, 1, controlMaxGear(nextMode));
+      let index = info.index;
+      let newId = `${controlPrefix(nextMode)}${gear}_${index}`;
+      while (used.has(newId) && newId !== node.id) {
+        index += 1;
+        newId = `${controlPrefix(nextMode)}${gear}_${index}`;
+      }
+      used.delete(node.id);
+      used.add(newId);
+      const oldId = node.id;
+      node.id = newId;
+      for (const edge of state.graph.edges) {
+        if (edge.from === oldId) edge.from = newId;
+        if (edge.to === oldId) edge.to = newId;
+      }
+      if (state.selected?.kind === "node" && state.selected.id === oldId) {
+        state.selected = { kind: "node", id: newId };
+      }
+      converted += 1;
+    }
+
+    const family = nextMode === "pipe" ? "PCU" : "ICU";
+    renderPaletteGears();
+    rebuildSimulator(
+      converted
+        ? `已切换为管道 ${family}（转换 ${converted} 个准入口）。`
+        : `准入口模式：${nextMode === "pipe" ? "管道 PCU" : "物品 ICU"}。`
+    );
+  }
+
   window._setControlGear = setControlGear;
   window._setControlMode = setControlMode;
 
@@ -1717,13 +1792,11 @@
   }
 
   function syncPaletteGear() {
-    if (els.paletteModeChips) {
-      for (const chip of els.paletteModeChips.querySelectorAll("[data-control-mode]")) {
-        chip.classList.toggle(
-          "is-active",
-          chip.getAttribute("data-control-mode") === state.controlMode
-        );
-      }
+    if (els.paletteControlLabel) {
+      els.paletteControlLabel.textContent = state.controlMode === "pipe" ? "PCU" : "ICU";
+    }
+    if (els.palettePipeToggle) {
+      els.palettePipeToggle.checked = state.controlMode === "pipe";
     }
     if (els.paletteGearChips) {
       for (const chip of els.paletteGearChips.querySelectorAll("[data-gear]")) {

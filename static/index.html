@@ -375,11 +375,11 @@
             <button data-mode-button="add-U" class="secondary">准入口 `5`</button>
           </div>
           <div class="solver-options" style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <span class="stat-key" style="font-size:12px;white-space:nowrap">准入口挡位</span>
-            <span class="gear-chips" id="palette-mode-chips">
-              <button type="button" class="gear-chip" data-control-mode="item">物品</button>
-              <button type="button" class="gear-chip" data-control-mode="pipe">管道</button>
-            </span>
+            <span class="stat-key" style="font-size:12px;white-space:nowrap">准入口 <strong id="palette-control-label">ICU</strong></span>
+            <label class="checkbox-row" style="font-size:12px;gap:6px">
+              <input id="palette-pipe-toggle" type="checkbox" style="width:auto" />
+              管道
+            </label>
             <span class="gear-chips" id="palette-gear-chips"></span>
           </div>
         </div>
@@ -567,6 +567,6 @@
     </div>
 
     <script src="./enkad-export.js?v=1"></script>
-    <script src="./app.js?v=5"></script>
+    <script src="./app.js?v=6"></script>
   </body>
 </html>

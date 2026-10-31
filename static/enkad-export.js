@@ -13,7 +13,7 @@ window.exportEnkad = async function (solution, copy = false) {
   }
   let baseline = null;
   if (cus.length) {
-    baseline = prompt("准入口归一化满速基准（每分钟）。物品 ICU/CU 通常为 30；管道 PCU 通常为 120。仅映射平均流量，五 tick 行为尚未验证。",
+    baseline = prompt("准入口归一化满速基准（每分钟）。物品 ICU/CU 通常为 30；管道 PCU 通常为 120。仅映射平均流量；仿真按 40 tick（5 帧）窗口校验。",
                       solution.topoflow?.transport === "belt" ? "30" : "120");
     if (baseline === null) return;
     if (!baseline.trim()) throw new Error("请填写满速基准");

@@ -79,7 +79,7 @@ toBacking(rate): rate == (pipe ? 120 : 30) ? 0 : floor(rate * 2)
 | PCU9 | 54/m | 108 |
 
 这只是平均速率映射，尚未证明 EnKA 的接收节拍、启动和阻塞行为等同于
-TopoFlow 的“首件触发五 tick 窗口，每窗口接收最多 g 件”。两者 tick
+TopoFlow 的“首件触发五帧（40 tick）窗口，每窗口接收最多 g 件”。两者 tick
 不能直接等同。物品准入口只能用于 belt 图层，管道准入口只能用于 pipe 图层。
 
 ## 后续导出要求
