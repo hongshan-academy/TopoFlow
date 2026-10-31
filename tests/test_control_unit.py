@@ -112,7 +112,10 @@ class ControlUnitNodeTests(unittest.TestCase):
 
 
 class ControlUnitSimulationTests(unittest.TestCase):
-    def test_each_gear_accepts_at_most_g_items_per_five_ticks(self) -> None:
+    def test_each_gear_accepts_at_most_g_items_per_forty_ticks(self) -> None:
+        # The first item crosses four belt cells (32 ticks) plus the
+        # injection/receive phase and arrives in frame 5.  Each later item
+        # follows one frame apart; a forty-tick window is five frames.
         for gear in range(1, 5):
             with self.subTest(gear=gear):
                 node = f"CU{gear}_0"
@@ -120,7 +123,11 @@ class ControlUnitSimulationTests(unittest.TestCase):
                 received = [sim.step_once()[0][node] for _ in range(17)]
                 self.assertEqual(
                     [tick for tick, accepted in enumerate(received, 1) if accepted],
-                    [tick for start in (2, 7, 12, 17) for tick in range(start, min(start + gear, 18))],
+                    [
+                        tick
+                        for start in (5, 10, 15)
+                        for tick in range(start, min(start + gear, 18))
+                    ],
                 )
 
     def test_window_starts_with_first_item_after_idle_gap(self) -> None:
@@ -150,6 +157,8 @@ class ControlUnitSimulationTests(unittest.TestCase):
         node = "CU1_0"
         result = simulate_frames(Graph.from_edges([("In", node), (node, "Out")]))
         self.assertTrue(result["cycle"]["converged"])
+        self.assertEqual(result["cycle"]["period_ticks"], 40)
+        self.assertEqual(result["cycle"]["period"], 5)
         self.assertEqual(result["cycle"]["node_ratios"][node], (1, 5))
 
 

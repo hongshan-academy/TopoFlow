@@ -38,7 +38,7 @@ from flow_service import (
 )
 from solver import solve_native
 from simulator import simulate_frames
-from graph import Graph, control_gear
+from graph import Graph, control_gear, control_mode
 from config import DEFAULT_CONFIG
 
 LOG_DIR = Path("logs")
@@ -103,7 +103,20 @@ class SolveRequest(BaseModel):
 
 
 class SimulateOptions(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     max_frames: Optional[int] = None
+    transport: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("transport", "transport_type"),
+    )
+    default_edge_length: Optional[int] = Field(
+        default=None,
+        ge=0,
+        validation_alias=AliasChoices(
+            "default_edge_length", "defaultEdgeLength", "edge_length"
+        ),
+    )
 
 
 class SimulateRequest(BaseModel):
@@ -134,6 +147,7 @@ class TopoflowLayoutRequest(BaseModel):
     nodes: List[dict] = Field(default_factory=list, validation_alias=AliasChoices("nodes", "rawNodes"))
     edges: List[dict] = Field(default_factory=list, validation_alias=AliasChoices("edges", "rawEdges"))
     require_belt_cell: bool = Field(default=True, validation_alias=AliasChoices("requireBeltCell", "require_belt_cell"))
+    transport: Optional[str] = Field(default=None, validation_alias=AliasChoices("transport", "transport_type"))
     time_limit: float = Field(default=30.0, validation_alias=AliasChoices("timeLimit", "time_limit"))
     min_grid: int = Field(default=3, validation_alias=AliasChoices("minGrid", "min_grid"))
     workers: int = 16
@@ -170,7 +184,11 @@ def _get_layout_adapter():
     return adapter
 
 
-def _convert_for_topoflow(nodes: list[dict], edges: list[dict]) -> dict:
+def _convert_for_topoflow(
+    nodes: list[dict], edges: list[dict], transport: str = "belt"
+) -> dict:
+    if transport not in ("belt", "pipe"):
+        raise ValueError("transport must be 'belt' or 'pipe'")
     in_deg: Dict[str, int] = defaultdict(int)
     out_deg: Dict[str, int] = defaultdict(int)
     for e in edges:
@@ -194,7 +212,12 @@ def _convert_for_topoflow(nodes: list[dict], edges: list[dict]) -> dict:
                 raise ValueError(f"Invalid control unit ID: {nid}")
             if (in_d, out_d) != (1, 1):
                 raise ValueError(f"Control unit {nid} must have degree (1, 1)")
-            tf_type = f"CU{gear}"
+            mode = "pipe" if transport == "pipe" else "item"
+            if control_mode(nid) != mode:
+                raise ValueError(
+                    f"Control unit {nid} does not match {transport} transport"
+                )
+            tf_type = f"{'PCU' if transport == 'pipe' else 'ICU'}{gear}"
         elif ntype == "S":
             if out_d < 2 or out_d > 3:
                 raise ValueError(f"Splitter {nid} has out-degree {out_d}, expected 2 or 3; cannot build physical layout")
@@ -216,14 +239,15 @@ def _convert_for_topoflow(nodes: list[dict], edges: list[dict]) -> dict:
 
 def _try_solve(adapter, topo_graph: dict, rows: int, cols: int,
                require_cell: bool, time_limit: float,
-               workers: int = 16, search_mode: str = "fast") -> tuple[dict, int]:
+               workers: int = 16, search_mode: str = "fast",
+               transport: str = "belt") -> tuple[dict, int]:
     mid = rows // 2
     adapted = adapter.adapt_topoflow(
         topo_graph,
         rank=1,
         rows=rows,
         columns=cols,
-        transport="belt",
+        transport=transport,
         require_splitter_merger_belt_cell=require_cell,
         terminal_anchors={
             "In": {"side": "left", "offset": mid},
@@ -242,7 +266,8 @@ def _try_solve(adapter, topo_graph: dict, rows: int, cols: int,
 def _find_min_grid(adapter, topo_graph: dict, require_cell: bool,
                    time_limit: float, min_size: int,
                    workers: int = 16,
-                   progress_cb=None) -> tuple[int, int, dict, int] | None:
+                   progress_cb=None,
+                   transport: str = "belt") -> tuple[int, int, dict, int] | None:
     n_internal = sum(1 for nid in topo_graph["nodes"]
                      if nid not in ("In", "Out"))
     start = max(min_size, n_internal + 2)
@@ -256,7 +281,8 @@ def _find_min_grid(adapter, topo_graph: dict, require_cell: bool,
             progress_cb(size, size)
         try:
             sol, route_length = _try_solve(adapter, topo_graph, size, size,
-                                           require_cell, time_limit, workers)
+                                           require_cell, time_limit, workers,
+                                           transport=transport)
             cur_r = cur_c = size
             break
         except adapter.SolveFailure:
@@ -284,7 +310,8 @@ def _find_min_grid(adapter, topo_graph: dict, require_cell: bool,
                 progress_cb(nr, nc)
             try:
                 s, rl = _try_solve(adapter, topo_graph, nr, nc, require_cell,
-                                   min(15.0, time_limit), workers)
+                                   min(15.0, time_limit), workers,
+                                   transport=transport)
                 cur_r, cur_c, cur_sol, cur_rl = nr, nc, s, rl
                 compressed = True
                 break
@@ -297,7 +324,8 @@ def _find_min_grid(adapter, topo_graph: dict, require_cell: bool,
     # minimal grid found.
     try:
         cur_sol, cur_rl = _try_solve(adapter, topo_graph, cur_r, cur_c, require_cell,
-                                     min(15.0, time_limit), workers, "balanced")
+                                     min(15.0, time_limit), workers, "balanced",
+                                     transport=transport)
     except adapter.SolveFailure:
         pass
 
@@ -424,7 +452,15 @@ def api_simulate(req: SimulateRequest) -> Any:
     limit = DEFAULT_CONFIG.sim_max_frames
     if limit is not None and (max_frames is None or max_frames > limit):
         max_frames = limit
-    result = simulate_frames(graph, max_frames=max_frames)
+    try:
+        result = simulate_frames(
+            graph,
+            max_frames=max_frames,
+            transport=req.options.transport,
+            edge_length=req.options.default_edge_length,
+        )
+    except ValueError as exc:
+        return _error(str(exc))
 
     edge_to_id: Dict[Tuple[str, str, int], str] = {}
     for i, e in enumerate(req_edges):
@@ -467,9 +503,11 @@ def api_simulate(req: SimulateRequest) -> Any:
             eid = edge_to_id.get(key, ed.get('id') or f"{ed['from']}->{ed['to']}_{ed['idx']}")
             frame_edges[eid] = {
                 'queue': ed['queue'],
+                'length': ed.get('length'),
             }
         frames_json.append({
             'frame': f['frame'],
+            'tick': f.get('tick'),
             'nodes': frame_nodes,
             'edges': frame_edges,
         })
@@ -477,9 +515,15 @@ def api_simulate(req: SimulateRequest) -> Any:
     return {
         'cycleInfo': {
             'period': result['cycle']['period'],
+            'periodTicks': result['cycle'].get('period_ticks'),
             'cycleStartFrame': result['cycle']['cycle_start_frame'],
+            'cycleStartTick': result['cycle'].get('cycle_start_tick'),
             'totalFrames': result['cycle']['total_frames'],
+            'totalTicks': result['cycle'].get('total_ticks'),
             'warmupFrames': result['cycle']['warmup_frames'],
+            'warmupTicks': result['cycle'].get('warmup_ticks'),
+            'transport': result['cycle'].get('transport'),
+            'converged': result['cycle'].get('converged', True),
             'nodeRatios': node_ratios,
             'edgeRatios': edge_ratios,
         },
@@ -518,7 +562,12 @@ async def api_limit_module(req: LimitModuleRequest):
 async def api_topoflow_layout(req: TopoflowLayoutRequest):
     try:
         adapter = _get_layout_adapter()
-        topo_graph = _convert_for_topoflow(req.nodes, req.edges)
+        transport = req.transport
+        if transport is None:
+            transport = "pipe" if any(
+                control_mode(node.get("id", "")) == "pipe" for node in req.nodes
+            ) else "belt"
+        topo_graph = _convert_for_topoflow(req.nodes, req.edges, transport)
     except Exception as e:
         return _error(str(e))
 
@@ -528,7 +577,8 @@ async def api_topoflow_layout(req: TopoflowLayoutRequest):
         def progress(rows: int, cols: int):
             q.put({"type": "progress", "rows": rows, "cols": cols})
         result = _find_min_grid(adapter, topo_graph, req.require_belt_cell,
-                                req.time_limit, req.min_grid, req.workers, progress)
+                                req.time_limit, req.min_grid, req.workers, progress,
+                                transport=transport)
         if result is None:
             q.put({"type": "result", "result": None})
         else:
