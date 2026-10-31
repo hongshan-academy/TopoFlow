@@ -1642,7 +1642,15 @@
     $("#export-btn").onclick = downloadRequest; $("#export-side-btn").onclick = downloadRequest; $("#copy-command-btn").onclick = copyCommand;
     $("#enkad-copy-btn").onclick = () => window.exportEnkad(state.solution, true).catch(error => toast(error.message));
     $("#enkad-download-btn").onclick = () => window.exportEnkad(state.solution, false).catch(error => toast(error.message));
-    $("#review-design-btn").onclick = switchSolutionView;
+    $("#review-design-btn").onclick = () => {
+      // In the parent workbench, "查看原设计" means the original TopoFlow
+      // graph, not a second copy of the logical design inside the iframe.
+      if (isSolutionView() && window.parent !== window) {
+        window.parent.postMessage({ kind: "topoflow-show-original" }, "*");
+        return;
+      }
+      switchSolutionView();
+    };
     $("#demo-btn").onclick = () => loadObject(deepCopy(DEMO), "内置演示拓扑");
     $("#rank-select").onchange = event => {
       const parsed = selectedResultFrom(state.results, Number(event.target.value));

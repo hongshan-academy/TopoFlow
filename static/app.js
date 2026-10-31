@@ -877,6 +877,12 @@
     els.layoutToggleBtn.addEventListener("click", () => {
       showLayoutOverlay(state.topologyLayout);
     });
+    window.addEventListener("message", (event) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.kind === "topoflow-show-original") {
+        closeLayoutOverlay();
+      }
+    });
     els.layoutExportBtn.addEventListener("click", onLayoutExport);
     els.layoutImportBtn.addEventListener("click", onLayoutImport);
     els.layoutImportFile.addEventListener("change", handleLayoutImportFile);
