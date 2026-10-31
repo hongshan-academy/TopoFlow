@@ -95,6 +95,7 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 10px;
       }
+      #layout-actions button { white-space: nowrap; }
       #layout-status, #ratio-status, #limit-status, #sim-status {
         flex-shrink: 0;
         overflow-wrap: anywhere;
@@ -535,10 +536,10 @@
           <button id="layout-btn">计算物理布局</button>
         </div>
         <div id="layout-status" style="font-size:13px;color:var(--muted);min-height:1.2em"></div>
-        <div class="buttons" style="margin-top:4px">
+        <div class="buttons" id="layout-actions" style="margin-top:4px">
           <button id="layout-export-btn" class="secondary">导出布局</button>
-          <button id="enkad-copy-btn" class="secondary">复制 EnKA 蓝图</button>
-          <button id="enkad-download-btn" class="secondary">下载 EnKA 蓝图</button>
+          <button id="enkad-copy-btn" class="secondary" title="复制 EnKA 蓝图" aria-label="复制 EnKA 蓝图">复制蓝图</button>
+          <button id="enkad-download-btn" class="secondary" title="下载 EnKA 蓝图" aria-label="下载 EnKA 蓝图">下载蓝图</button>
           <button id="layout-import-btn" class="secondary">导入布局</button>
         </div>
         <input id="layout-import-file" type="file" accept=".json" hidden />
