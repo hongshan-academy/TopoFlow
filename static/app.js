@@ -506,7 +506,7 @@
     if (layoutFrameLoaded) postLayoutToFrame(meta);
     else layoutPendingMeta = meta; // 等 iframe 加载完成后再注入
     els.layoutOverlay.style.display = "block";
-    els.layoutToggleBtn.textContent = "查看原图";
+    els.layoutToggleBtn.textContent = "返回拓扑图";
     els.layoutToggleBtn.style.display = "block";
   }
 
