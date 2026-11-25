@@ -1,11 +1,20 @@
-use num_traits::{FromPrimitive, One, ToPrimitive, Zero};
+use num_traits::{One, Zero};
 use z3::ast::{Ast, Int, Real};
-use z3::{Optimize, SatResult};
+use z3::{Model, Optimize, SatResult};
 
 use crate::graph::{GraphData, Kind};
 use crate::{NativeFlowSolution, Rat};
 
-fn solve_exact(rows: Vec<(Vec<Rat>, Rat)>, variables: usize) -> Result<(Vec<Rat>, bool), String> {
+fn read_real(model: &Model<'_>, variable: &Real<'_>) -> Result<Rat, String> {
+    let value = model
+        .eval(variable, true)
+        .ok_or_else(|| format!("missing model value for {variable}"))?;
+    crate::ilp_bridge::parse_z3_numeral(&value.to_string())
+        .map_err(|err| format!("invalid model value for {variable}: {err}"))
+}
+
+fn solve_exact(rows: Vec<(Vec<Rat>, Rat)>, model_flows: &[Rat]) -> Result<(Vec<Rat>, bool), String> {
+    let variables = model_flows.len();
     let mut matrix: Vec<Vec<Rat>> = rows
         .into_iter()
         .map(|(mut coefficients, rhs)| {
@@ -47,9 +56,17 @@ fn solve_exact(rows: Vec<(Vec<Rat>, Rat)>, variables: usize) -> Result<(Vec<Rat>
         }
     }
     let full_rank = pivot_columns.len() == variables;
-    let mut solution = vec![Rat::zero(); variables];
+    // Keep the model's free coordinates. Reduced rows have zero coefficients
+    // for every other pivot, so the pivot values can be computed independently.
+    let mut solution = model_flows.to_vec();
     for (r, &column) in pivot_columns.iter().enumerate() {
-        solution[column] = matrix[r][variables].clone();
+        solution[column] = matrix[r][column + 1..variables]
+            .iter()
+            .zip(&model_flows[column + 1..])
+            .filter(|(coefficient, _)| !coefficient.is_zero())
+            .fold(matrix[r][variables].clone(), |rhs, (coefficient, flow)| {
+                rhs - coefficient * flow
+            });
     }
     Ok((solution, full_rank))
 }
@@ -57,7 +74,7 @@ fn solve_exact(rows: Vec<(Vec<Rat>, Rat)>, variables: usize) -> Result<(Vec<Rat>
 pub fn solve(
     edges: Vec<(String, String)>,
     fixed_edges: Option<Vec<usize>>,
-    workers: u32,
+    _workers: u32,
 ) -> Result<NativeFlowSolution, String> {
     let graph = GraphData::new(edges)?;
     let m = graph.edges.len();
@@ -75,7 +92,10 @@ pub fn solve(
         }
     }
 
-    let ctx = crate::context_with_threads(workers);
+    // Keep rank-SMT single-threaded. Z3's parallel SMT portfolio (smt.threads)
+    // can return different optimal models for the same input, which makes the
+    // reconstructed flows non-deterministic.
+    let ctx = crate::context_with_threads(1);
     let optimize = Optimize::new(&ctx);
 
     let zero = Real::from_real(&ctx, 0, 1);
@@ -246,23 +266,13 @@ pub fn solve(
         return Err("MIP has no solution satisfying the strict flow bounds".into());
     }
     let model = optimize.get_model().ok_or("optimizer returned no model")?;
-    let margin_value = model
-        .eval(&margin, true)
-        .and_then(|value| value.as_real())
-        .ok_or("failed to read the strict margin")?;
-    if margin_value.0 <= 0 {
+    if read_real(&model, &margin)? <= Rat::zero() {
         return Err("MIP has no solution satisfying the strict flow bounds".into());
     }
-    let floats: Vec<f64> = flow
+    let model_flows = flow
         .iter()
-        .map(|variable| {
-            model
-                .eval(variable, true)
-                .and_then(|value| value.as_real())
-                .map(|(num, den)| num as f64 / den as f64)
-                .unwrap_or(f64::NAN)
-        })
-        .collect();
+        .map(|variable| read_real(&model, variable))
+        .collect::<Result<Vec<_>, _>>()?;
 
     // --- exact reconstruction from the chosen state / fixed assignment ------
     let mut is_fixed = vec![false; m];
@@ -350,36 +360,10 @@ pub fn solve(
         }
     }
 
-    let (exact_flows, rank_full) = match solve_exact(rows, m) {
-        Ok(result) => result,
-        Err(err) => {
-            eprintln!("rank-smt: exact reconstruction failed ({err}); using float approximation");
-            (
-                floats
-                    .iter()
-                    .map(|&value| Rat::from_f64(value).unwrap_or_else(Rat::zero))
-                    .collect(),
-                false,
-            )
-        }
-    };
-    let nonnegative = exact_flows.iter().all(|value| value >= &Rat::zero());
-    let consistent = rank_full
-        && exact_flows
-            .iter()
-            .zip(&floats)
-            .all(|(value, &float)| (value.to_f64().unwrap_or(f64::NAN) - float).abs() <= 1e-6);
-    let (flows, full_rank) = if nonnegative {
-        (exact_flows, consistent)
-    } else {
-        (
-            floats
-                .iter()
-                .map(|&value| Rat::from_f64(value).unwrap_or_else(Rat::zero))
-                .collect(),
-            false,
-        )
-    };
+    let (flows, full_rank) = solve_exact(rows, &model_flows)?;
+    if let Some(edge) = flows.iter().zip(&model_flows).position(|(flow, model)| flow != model) {
+        return Err(format!("exact flow reconstruction differs from the SMT model at edge {edge}"));
+    }
 
     let total = graph.sources.iter().fold(Rat::zero(), |sum, &source| {
         sum + &flows[graph.outgoing[source][0]]
@@ -427,5 +411,44 @@ mod tests {
         assert_eq!(result.flow_denominators, vec![BigInt::from(1), BigInt::from(1)]);
         assert_eq!(result.total_numerator, BigInt::from(2));
         assert_eq!(result.total_denominator, BigInt::from(1));
+    }
+
+    #[test]
+    fn reads_model_rationals_beyond_i64() {
+        let ctx = crate::context_with_threads(1);
+        let solver = z3::Solver::new(&ctx);
+        let variable = Real::new_const(&ctx, "large_denominator");
+        let denominator = "9223372036854775809";
+        solver.assert(&variable._eq(&Real::from_real_str(&ctx, "1", denominator).unwrap()));
+        assert_eq!(solver.check(), SatResult::Sat);
+        let model = solver.get_model().unwrap();
+        assert_eq!(
+            read_real(&model, &variable).unwrap(),
+            Rat::new(BigInt::from(1), denominator.parse().unwrap())
+        );
+    }
+
+    #[test]
+    fn reconstructs_positive_flows_for_deficient_rank() {
+        let graph = edges(&[
+            ("In", "S0"), ("S0", "S2"), ("S0", "C1"), ("S2", "C0"),
+            ("S2", "C1"), ("C0", "Out"), ("C1", "C0"),
+        ]);
+        for fixed in [None, Some(vec![0, 5])] {
+            let result = solve(graph.clone(), fixed, 1).unwrap();
+            assert!(result.feasible);
+            assert!(!result.full_rank);
+            let flows: Vec<Rat> = result.flow_numerators.into_iter()
+                .zip(result.flow_denominators)
+                .map(|(num, den)| Rat::new(num, den))
+                .collect();
+            assert!(flows.iter().all(|flow| flow > &Rat::zero()));
+            assert_eq!(flows[0], Rat::one());
+            assert_eq!(flows[5], Rat::one());
+            assert_eq!(flows[0], &flows[1] + &flows[2]);
+            assert_eq!(flows[1], &flows[3] + &flows[4]);
+            assert_eq!(flows[6], &flows[2] + &flows[4]);
+            assert_eq!(flows[5], &flows[3] + &flows[6]);
+        }
     }
 }

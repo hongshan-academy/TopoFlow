@@ -361,7 +361,8 @@
     state.solverModel = els.solverModel.value;
     state.solverInfo = null;
     if (els.workersRow) {
-      els.workersRow.style.display = state.solverModel === "rust-karzanov" ? "none" : "";
+      // Both native Rust engines are fixed to single-threaded execution.
+      els.workersRow.style.display = state.solverModel.startsWith("rust-") ? "none" : "";
     }
     if (els.threeStateControls) els.threeStateControls.style.display = isRust ? "none" : "";
     if (isRust) {

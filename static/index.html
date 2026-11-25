@@ -414,12 +414,12 @@
             </select>
             <div id="workers-row">
               <div class="stat-row" style="margin-top:8px">
-                <span class="stat-key" title="其他求解器使用的并行线程数；Karzanov 固定单线程，不受此值影响">Workers</span>
+                <span class="stat-key" title="仅 MILP 使用的并行线程数；Karzanov 和 rank-SMT 固定单线程">Workers</span>
                 <input id="workers-input" type="number" min="1" max="64" step="1" value="16"
-                       title="其他求解器使用的并行线程数；Karzanov 固定单线程，不受此值影响"
+                       title="仅 MILP 使用的并行线程数；Karzanov 和 rank-SMT 固定单线程"
                        style="width:72px;padding:4px 8px;border:1px solid var(--line);border-radius:8px;text-align:right" />
               </div>
-              <div style="font-size:11px;color:#8a8a8a;margin-top:4px">并行线程数；不影响 Karzanov（固定单线程）</div>
+              <div style="font-size:11px;color:#8a8a8a;margin-top:4px">仅 MILP 使用；Karzanov / rank-SMT 固定单线程</div>
             </div>
             <div class="solver-options" style="display:grid;gap:8px;margin-top:8px">
               <div class="buttons">
@@ -588,6 +588,6 @@
     </div>
 
     <script src="./enkad-export.js?v=1"></script>
-    <script src="./app.js?v=12"></script>
+    <script src="./app.js?v=13"></script>
   </body>
 </html>
