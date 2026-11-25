@@ -103,6 +103,7 @@
     activeSaveId: null,
     message: "选择模式下可选中、拖动和删除节点。",
     backendBusy: false,
+    solverInfo: null,
     topologyLayout: null,
     solverModel: "rust-rank-smt",
     controlMode: "item",
@@ -129,6 +130,7 @@
     removeSave: document.getElementById("delete-save-btn"),
     solveBtn: document.getElementById("solve-btn"),
     solverModel: document.getElementById("solver-model"),
+    solverStatus: document.getElementById("solver-status"),
     workersInput: document.getElementById("workers-input"),
     workersRow: document.getElementById("workers-row"),
     threeStateControls: document.getElementById("three-state-controls"),
@@ -237,6 +239,7 @@
     state.backendBusy = true;
     state.message = "MILP 求解中...";
     state.flowGroups = [];
+    state.solverInfo = null;
     state.currentFlowIdx = 0;
     state.currentStateIdx = 0;
     state.solveAttempted = true;
@@ -302,11 +305,25 @@
     return [{ states: [{ edgeBlocked, edgeFlows, nodeFlows: {} }] }];
   }
 
+  function formatSolverInfo(info) {
+    if (!info) return "";
+    const label = info.model === "rank-smt" ? "rank-SMT" : "Karzanov";
+    let text = `${label} 完成：总流量 ${info.totalText}，${info.iterations} 次迭代`;
+    // The rank flag is only meaningful for the rank-SMT backend.
+    if (info.model === "rank-smt" && info.fullRank === true) {
+      text += "｜满秩";
+    } else if (info.model === "rank-smt" && info.fullRank === false) {
+      text += "｜欠秩";
+    }
+    return text;
+  }
+
   async function triggerNativeSolve() {
     if (state.backendBusy) return;
     state.backendBusy = true;
     state.message = "Rust 求解中...";
     state.flowGroups = [];
+    state.solverInfo = null;
     state.currentFlowIdx = 0;
     state.currentStateIdx = 0;
     state.solveAttempted = true;
@@ -316,10 +333,18 @@
       state.flowGroups = wrapNativeResult(res);
       state.currentFlowIdx = 0;
       state.currentStateIdx = 0;
+      state.solverInfo = {
+        model: res.model,
+        backend: res.backend,
+        totalText: res.totalText || (+res.totalFlow).toFixed(4),
+        iterations: res.iterations,
+        fullRank: res.fullRank,
+      };
       state.message =
         `Rust 求解完成（${res.backend}，总流量 ${res.totalText || (+res.totalFlow).toFixed(4)}，${res.iterations} 次迭代）。`;
     } catch (error) {
       state.flowGroups = [];
+      state.solverInfo = null;
       state.message = `Rust 求解失败: ${error.message}`;
       showToast(`Rust 求解失败: ${error.message}`, "error");
     } finally {
@@ -334,6 +359,7 @@
     const kind = opt ? opt.dataset.kind : "milp";
     const isRust = kind === "rust";
     state.solverModel = els.solverModel.value;
+    state.solverInfo = null;
     if (els.workersRow) {
       els.workersRow.style.display = state.solverModel === "rust-karzanov" ? "none" : "";
     }
@@ -782,6 +808,7 @@
 
   async function rebuildSimulator(message) {
     state.flowGroups = [];
+    state.solverInfo = null;
     state.currentFlowIdx = 0;
     state.currentStateIdx = 0;
     state.solveAttempted = false;
@@ -1413,6 +1440,9 @@
       els.simFrameValue.textContent = simN > 0 ? `${state.simFrame + 1} / ${simN}` : "0 / 0";
     }
     els.graphStats.textContent = `${state.graph.nodes.length} 个节点 / ${state.graph.edges.length} 条边`;
+    if (els.solverStatus) {
+      els.solverStatus.textContent = formatSolverInfo(state.solverInfo);
+    }
     renderSaveControls();
     syncPaletteGear();
 

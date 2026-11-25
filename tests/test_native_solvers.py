@@ -180,6 +180,17 @@ class NativeMultiBoundarySolverTests(unittest.TestCase):
                     ["1/2", "1/2", "1/1", "1/2", "1/2"],
                 )
 
+    def test_rank_status_is_exposed_only_for_rank_smt(self) -> None:
+        rank_smt = solve_native(
+            "rank-smt", MULTI_BOUNDARY_NODES, MULTI_BOUNDARY_EDGES, workers=1
+        )
+        self.assertIs(rank_smt["fullRank"], True)
+
+        karzanov = solve_native(
+            "karzanov", MULTI_BOUNDARY_NODES, MULTI_BOUNDARY_EDGES, workers=1
+        )
+        self.assertIsNone(karzanov["fullRank"])
+
     def test_disconnected_boundary_components_aggregate_total(self) -> None:
         nodes = [
             {"id": "InputA", "type": "In"},

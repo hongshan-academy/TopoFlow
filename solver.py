@@ -83,6 +83,10 @@ def solve_native(
     can_in = list(getattr(res, "can_in", None) or [])
     can_out = list(getattr(res, "can_out", None) or [])
     has_states = len(can_in) == len(edges) == len(can_out)
+    # rank-SMT certifies that the exact reconstruction system for the chosen
+    # edge-state assignment has full rank. Karzanov does not classify states,
+    # so the flag has no meaning there and is reported as null.
+    full_rank = bool(res.full_rank) if engine == "rank-smt" else None
 
     edge_flows: List[dict] = []
     for index, (edge, value, numerator, denominator) in enumerate(
@@ -117,6 +121,7 @@ def solve_native(
         "totalDenominator": total_denominator,
         "totalText": f"{total_numerator}/{total_denominator}",
         "iterations": res.iterations,
+        "fullRank": full_rank,
         "edgeFlows": edge_flows,
     }
 
