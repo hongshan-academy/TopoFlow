@@ -190,8 +190,18 @@ class FlowModel:
 
             # No-idle: every edge is blocked, unblocked, or both.
             model.add(b + ub >= 1)
-            # Full: both blocked and unblocked => v = 1.
-            model.add(v[edge] >= b + ub - 1)
+            # Full: both blocked and unblocked => v = edge capacity.  Edges
+            # entering a CU saturate at gear/denominator, not one.
+            gear_target = control_gear(edge[1])
+            if gear_target is None:
+                model.add(v[edge] >= b + ub - 1)
+            else:
+                denominator_target = control_denominator(edge[1])
+                assert denominator_target is not None
+                model.add(
+                    v[edge] * denominator_target
+                    >= gear_target * (b + ub - 1)
+                )
 
             # Splitter: blocked -> L.
             model.add(v[edge] >= v_L_in[edge] - M * (1 - b))
@@ -286,10 +296,16 @@ class FlowModel:
             model.add(is_blocked[out_edge] <= is_blocked[in_edge])
             model.add(is_unblocked[in_edge] <= is_unblocked[out_edge])
 
-            # Upstream blocked => incoming flow saturates at gear/denominator.
+            # The incoming flow saturates at gear/denominator only when the
+            # cut is at the CU: the input is blocked and the output is still
+            # unblocked.  A blocked input feeding a blocked output may stay
+            # below capacity.
             model.add(
                 v[in_edge] * denominator
-                >= gear - 2 * denominator + 2 * denominator * is_blocked[in_edge]
+                >= gear
+                - 4 * denominator
+                + 2 * denominator * is_blocked[in_edge]
+                + 2 * denominator * is_unblocked[out_edge]
             )
 
         self.model = model

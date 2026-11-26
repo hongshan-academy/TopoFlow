@@ -113,6 +113,9 @@ pub fn solve(
 
     optimize.assert(&margin.ge(&zero));
     optimize.assert(&margin.le(&one));
+    // Keep strict positivity as a hard constraint: the lexicographic
+    // objectives below may otherwise settle on a margin-zero model.
+    optimize.assert(&margin.gt(&zero));
     let mut fixed_sums: Vec<Int> = (0..graph.component_count)
         .map(|_| Int::from_i64(&ctx, 0))
         .collect();
@@ -140,7 +143,23 @@ pub fn solve(
                 ._eq(&one_int),
         );
 
-        let candidate = matches!(graph.kinds[edge.u], Kind::Source | Kind::Merger)
+        // A splitter output into a CU may be a fixed anchor, but only when the
+        // splitter is not itself fed by a CU.  A CU-fed splitter is distributing
+        // an already throttled flow; fixing one of several outputs would let the
+        // solver break the equal split and change the boundary.  A single-output
+        // splitter has no split to preserve, so it may still anchor the CU.
+        let fed_by_control = graph.incoming[edge.u]
+            .first()
+            .map(|&input_edge| {
+                matches!(graph.kinds[graph.edges[input_edge].u], Kind::ControlUnit { .. })
+            })
+            .unwrap_or(false);
+        let single_output = graph.outgoing[edge.u].len() == 1;
+        let splitter_cu_candidate = matches!(graph.kinds[edge.u], Kind::Splitter)
+            && matches!(graph.kinds[edge.v], Kind::ControlUnit { .. })
+            && (!fed_by_control || single_output);
+        let candidate = (matches!(graph.kinds[edge.u], Kind::Source | Kind::Merger)
+            || splitter_cu_candidate)
             && matches!(
                 graph.kinds[edge.v],
                 Kind::Sink | Kind::Splitter | Kind::ControlUnit { .. }
@@ -159,7 +178,11 @@ pub fn solve(
             optimize.assert(&flow[edge_id].ge(&scaled));
             optimize.assert(&flow[edge_id].le(&(&cap - &margin + &scaled)));
         } else if explicitly_selected[edge_id] {
-            optimize.assert(&flow[edge_id].ge(&Real::from_int(&fixed[edge_id])));
+            // Explicit fixed edges outside the candidate set may still point
+            // into a CU; their full speed is the target capacity, not one.
+            let fixed_real = Real::from_int(&fixed[edge_id]);
+            let scaled = &cap * &fixed_real;
+            optimize.assert(&flow[edge_id].ge(&scaled));
         }
 
         let buffer = graph.kinds[edge.u] == Kind::Splitter && graph.kinds[edge.v] == Kind::Merger;
@@ -249,17 +272,56 @@ pub fn solve(
             Kind::ControlUnit { gear, denominator } => {
                 let input = graph.incoming[node][0];
                 let output = graph.outgoing[node][0];
-                // Downstream blocked => upstream blocked (equivalently, upstream
-                // flowing => downstream flowing).
-                optimize.assert(&full_state[output].le(&full_state[input]));
-                // Upstream blocked => the incoming edge saturates at gear/denominator.
                 let cap = Real::from_real(&ctx, gear as i32, denominator as i32);
-                let blocked = Real::from_int(&full_state[input]);
-                optimize.assert(&flow[input].ge(&(&cap - &big_m * &(&one - &blocked))));
+                let two = Real::from_real(&ctx, 2, 1);
+
+                // can_in/can_out already encode the cut side; a CU is a
+                // pass-through, so can_in propagates downstream and can_out
+                // propagates upstream.
+                let can_in_x = empty[input].clone() + partial[input].clone();
+                let can_out_x = full_state[input].clone() + partial[input].clone();
+                let can_in_y = empty[output].clone() + partial[output].clone();
+                let can_out_y = full_state[output].clone() + partial[output].clone();
+                optimize.assert(&can_in_x.le(&can_in_y));
+                optimize.assert(&can_out_y.le(&can_out_x));
+
+                // x.can_out and y.can_in => the cut is at the CU, so x = cap.
+                let both = can_out_x.clone() + can_in_y.clone();
+                optimize.assert(
+                    &flow[input].ge(&(&cap - &big_m * &(&two - &Real::from_int(&both)))),
+                );
+
+                // x.not(can_out) => x is upstream, hence strictly below cap.
+                optimize.assert(
+                    &flow[input].le(
+                        &(&cap - &margin + &big_m * &Real::from_int(&can_out_x)),
+                    ),
+                );
             }
             _ => {}
         }
     }
+
+    // Lexicographic objective: first maximize total flow, then keep the
+    // number of fixed Splitter->CU edges minimal (so a splitter only
+    // saturates an output when the CU caps force it), then maximize margin.
+    let total = graph.sources.iter().fold(Real::from_real(&ctx, 0, 1), |sum, &source| {
+        sum + flow[graph.outgoing[source][0]].clone()
+    });
+    optimize.maximize(&total);
+
+    let new_fixed = graph
+        .edges
+        .iter()
+        .enumerate()
+        .filter(|(_, edge)| {
+            matches!(graph.kinds[edge.u], Kind::Splitter)
+                && matches!(graph.kinds[edge.v], Kind::ControlUnit { .. })
+        })
+        .fold(Int::from_i64(&ctx, 0), |sum, (index, _)| {
+            sum + fixed[index].clone()
+        });
+    optimize.minimize(&Real::from_int(&new_fixed));
 
     optimize.maximize(&margin);
     if optimize.check(&[]) != SatResult::Sat {
@@ -351,8 +413,10 @@ pub fn solve(
     for node in 0..graph.names.len() {
         if let Kind::ControlUnit { gear, denominator } = graph.kinds[node] {
             let input = graph.incoming[node][0];
-            // A blocked (delivering-only) incoming edge sits exactly at gear/denominator.
-            if can_out[input] {
+            let output = graph.outgoing[node][0];
+            // The cut is at the CU exactly when the input is downstream and
+            // the output can receive; then the input sits at capacity.
+            if can_out[input] && can_in[output] {
                 let mut row = vec![Rat::zero(); m];
                 row[input] = Rat::one();
                 rows.push((row, crate::rat_ratio(gear as i64, denominator as i64)));
@@ -426,6 +490,41 @@ mod tests {
             read_real(&model, &variable).unwrap(),
             Rat::new(BigInt::from(1), denominator.parse().unwrap())
         );
+    }
+
+    #[test]
+    fn anchors_single_output_splitter_into_control_unit() {
+        let result = solve(
+            edges(&[
+                ("In", "ICU4_0"),
+                ("ICU4_0", "S2_0"),
+                ("S2_0", "ICU1_1"),
+                ("ICU1_1", "Out"),
+            ]),
+            None,
+            1,
+        )
+        .expect("single-output splitter may anchor a CU");
+        assert_eq!(result.flow_numerators, vec![BigInt::from(1); 4]);
+        assert_eq!(result.flow_denominators, vec![BigInt::from(5); 4]);
+        assert_eq!(result.total_numerator, BigInt::from(1));
+        assert_eq!(result.total_denominator, BigInt::from(5));
+    }
+
+    #[test]
+    fn explicit_fixed_control_unit_edge_uses_capacity() {
+        let result = solve(
+            edges(&[
+                ("In", "ICU4_0"),
+                ("ICU4_0", "ICU1_1"),
+                ("ICU1_1", "Out"),
+            ]),
+            Some(vec![1]),
+            1,
+        )
+        .expect("explicit fixed CU edge should use its capacity");
+        assert_eq!(result.flow_numerators, vec![BigInt::from(1); 3]);
+        assert_eq!(result.flow_denominators, vec![BigInt::from(5); 3]);
     }
 
     #[test]

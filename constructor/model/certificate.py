@@ -222,9 +222,12 @@ def _is_converger(node: str) -> bool:
 
 def _is_fixed_candidate(edge: Edge) -> bool:
     source, target = edge
-    return (source == "In" or _is_converger(source)) and (
-        target == "Out" or _is_splitter(target) or control_gear(target) is not None
-    )
+    control_target = control_gear(target) is not None
+    return (
+        source == "In"
+        or _is_converger(source)
+        or (_is_splitter(source) and control_target)
+    ) and (target == "Out" or _is_splitter(target) or control_target)
 
 
 def _edge_capacity(edge: Edge) -> Fraction:

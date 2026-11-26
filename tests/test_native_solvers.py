@@ -222,3 +222,71 @@ class NativeMultiBoundarySolverTests(unittest.TestCase):
         ]
         with self.assertRaisesRegex(ValueError, "declared In"):
             solve_native("karzanov", nodes, edges, workers=1)
+
+
+class ControlUnitCutTests(unittest.TestCase):
+    def test_source_fed_cu_chain_matches_native_and_milp(self) -> None:
+        nodes = [
+            {"id": "In1", "type": "In"},
+            {"id": "Out1", "type": "Out"},
+            {"id": "ICU4_0", "type": "U"},
+            {"id": "ICU1_1", "type": "U"},
+            {"id": "S1", "type": "S"},
+        ]
+        edges = [
+            {"id": "e0", "from": "In1", "to": "ICU4_0"},
+            {"id": "e1", "from": "ICU4_0", "to": "S1"},
+            {"id": "e2", "from": "S1", "to": "ICU1_1"},
+            {"id": "e3", "from": "ICU1_1", "to": "Out1"},
+        ]
+        for engine in ("rank-smt", "karzanov"):
+            with self.subTest(engine=engine):
+                result = solve_native(engine, nodes, edges, workers=1)
+                self.assertEqual(result["totalText"], "1/5")
+                self.assertEqual(
+                    [edge["text"] for edge in result["edgeFlows"]],
+                    ["1/5", "1/5", "1/5", "1/5"],
+                )
+
+        result = solve(
+            Graph.from_edges([(edge["from"], edge["to"]) for edge in edges]),
+            workers=1,
+        )
+        self.assertEqual(result.status, "Optimal")
+        self.assertEqual(
+            [Fraction(edge.flow).limit_denominator(1000) for edge in result.edges],
+            [Fraction(1, 5)] * 4,
+        )
+
+    def test_source_fed_cu_then_merger_matches_native_and_milp(self) -> None:
+        nodes = [
+            {"id": "In1", "type": "In"},
+            {"id": "In2", "type": "In"},
+            {"id": "Out1", "type": "Out"},
+            {"id": "ICU4_0", "type": "U"},
+            {"id": "C2_0", "type": "C"},
+        ]
+        edges = [
+            {"id": "e0", "from": "In1", "to": "ICU4_0"},
+            {"id": "e1", "from": "ICU4_0", "to": "C2_0"},
+            {"id": "e2", "from": "In2", "to": "C2_0"},
+            {"id": "e3", "from": "C2_0", "to": "Out1"},
+        ]
+        for engine in ("rank-smt", "karzanov"):
+            with self.subTest(engine=engine):
+                result = solve_native(engine, nodes, edges, workers=1)
+                self.assertEqual(result["totalText"], "1/1")
+                self.assertEqual(
+                    [edge["text"] for edge in result["edgeFlows"]],
+                    ["1/2", "1/2", "1/2", "1/1"],
+                )
+
+        result = solve(
+            Graph.from_edges([(edge["from"], edge["to"]) for edge in edges]),
+            workers=1,
+        )
+        self.assertEqual(result.status, "Optimal")
+        self.assertEqual(
+            [Fraction(edge.flow).limit_denominator(1000) for edge in result.edges],
+            [Fraction(1, 2), Fraction(1, 2), Fraction(1, 2), Fraction(1, 1)],
+        )
