@@ -236,8 +236,18 @@ pub fn solve(
                 for &a in &graph.outgoing[node] {
                     for &b in &graph.outgoing[node] {
                         if a != b {
+                            // A CU at capacity can accept less than its siblings,
+                            // but cannot let a still-receiving sibling take less.
+                            // Preserve the exemption for explicitly fixed edges.
+                            let sibling_exemption = if !explicit_fixed
+                                && matches!(graph.kinds[graph.edges[b].v], Kind::ControlUnit { .. })
+                            {
+                                zero_int.clone()
+                            } else {
+                                fixed[b].clone()
+                            };
                             let penalty = Real::from_int(
-                                &(fixed[a].clone() + fixed[b].clone() + full_state[a].clone()),
+                                &(fixed[a].clone() + sibling_exemption + full_state[a].clone()),
                             );
                             let lhs = flow[a].clone() + &big_m * penalty;
                             optimize.assert(&lhs.ge(&flow[b]));

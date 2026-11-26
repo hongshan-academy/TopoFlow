@@ -38,6 +38,31 @@ def _certificate_graph(p: int, q: int):
 
 
 class ControlUnitSolverTests(unittest.TestCase):
+    def test_control_unit_anchor_respects_splitter_feedback(self) -> None:
+        pairs = [
+            ("In", "C2_3"),
+            ("C2_3", "S2_1"),
+            ("S2_1", "C2_1"),
+            ("S2_1", "CU4_20"),
+            ("CU4_20", "Out"),
+            ("C2_1", "C2_2"),
+            ("C2_2", "S3_0"),
+            ("S3_0", "C2_3"),
+        ]
+        names = dict.fromkeys(name for pair in pairs for name in pair)
+        nodes = [{"id": name, "type": _node_type(name)} for name in names]
+        edges = [{"from": source, "to": target} for source, target in pairs]
+        expected = ["1/2", "1/1", *(["1/2"] * 6)]
+
+        milp = solve(Graph.from_edges(pairs), workers=1)
+        self.assertEqual(milp.status, "Optimal")
+        self.assertEqual([edge.flow for edge in milp.edges], [float(Fraction(x)) for x in expected])
+        for engine in ("karzanov", "rank-smt"):
+            with self.subTest(engine=engine):
+                result = solve_native(engine, nodes, edges, workers=1)
+                self.assertEqual(result["totalText"], "1/2")
+                self.assertEqual([edge["text"] for edge in result["edgeFlows"]], expected)
+
     def test_control_unit_modules_match_between_engines(self) -> None:
         for gear in range(1, 5):
             nodes = [
